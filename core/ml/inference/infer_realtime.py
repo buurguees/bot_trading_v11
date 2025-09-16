@@ -6,6 +6,7 @@ from core.ml.utils.io import load_pickle
 from core.ml.inference.postprocess import prob_to_side, strength_from_prob
 from core.ml.training.registry import get_or_create_agent
 from core.ml.datasets.builder import build_dataset, FEATURES
+from core.trading.planner import plan_and_store
 
 load_dotenv("config/.env")
 ENGINE = create_engine(os.getenv("DB_URL"))
@@ -85,6 +86,14 @@ def main():
         side = prob_to_side(p)
         strength = strength_from_prob(p)
         upsert_signal(SYMBOL, TF, ts, side, strength, sl=None, tp=None, meta={"direction_ver_id": ver_id})
+        
+        # Crear TradePlan si hay señal operable
+        if side != 0:
+            try:
+                plan_id = plan_and_store(SYMBOL, TF, ts, side, float(strength), ver_id, engine=ENGINE)
+                print(f"TradePlan creado id={plan_id} | {SYMBOL}-{TF} ts={ts} side={side}")
+            except Exception as e:
+                print(f"[WARN] No se pudo crear TradePlan: {e}")
 
     print(f"Escritas predicciones y señales para {SYMBOL}-{TF} (últimas {len(df)} barras).")
 
