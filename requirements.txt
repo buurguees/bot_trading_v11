@@ -3,6 +3,7 @@
 
 # Trading y Exchange APIs
 ccxt>=4.2.0          # Conexión a BitGet (futuros perpetuos)
+ccxt[async]>=4.2.0   # Soporte asíncrono para ccxt
 
 # Base de Datos
 sqlalchemy>=2.0.0    # ORM para PostgreSQL
@@ -59,6 +60,15 @@ requests>=2.31.0     # Cliente HTTP
 
 # Procesamiento Paralelo
 multiprocessing-logging>=0.3.4  # Logging en multiprocessing
+
+# Utilidades adicionales para trading
+python-dateutil>=2.8.0  # Manejo avanzado de fechas
+pytz>=2023.3           # Zonas horarias
+tqdm>=4.65.0           # Barras de progreso para descargas
+
+# Validación de datos
+pydantic>=2.0.0        # Validación de modelos de datos
+marshmallow>=3.20.0    # Serialización/deserialización
 
 # Notas de Instalación:
 # - ta-lib requiere instalación previa del binario en el sistema
