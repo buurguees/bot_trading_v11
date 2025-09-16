@@ -1,11 +1,35 @@
 import os, json
 from typing import Optional, Dict, Any
+from dataclasses import is_dataclass, asdict
 from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.dialects.postgresql import JSONB
 from dotenv import load_dotenv
 from .position_sizer import load_risk_params, plan_from_price
 
 load_dotenv("config/.env")
+
+def _to_plain_dict(obj):
+    """Convierte dataclasses / SimpleNamespace / objetos a dict recursivamente."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if is_dataclass(obj):
+        return asdict(obj)
+    if hasattr(obj, "__dict__"):
+        return {k: _to_plain_dict(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
+    return obj  # tipos primitivos
+
+def _dig(obj, *path, default=None):
+    cur = obj
+    for key in path:
+        if cur is None:
+            return default
+        if isinstance(cur, dict):
+            cur = cur.get(key, None)
+        else:
+            cur = getattr(cur, key, None)
+    return default if cur is None else cur
 
 def choose_leverage(entry_px: float, sl_px: float, side: int,
                     atr: float, liq_buf_atr: float,
@@ -66,18 +90,19 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             raise RuntimeError("No se pudo obtener entry_px o ATR para planificar el trade.")
 
         rp = load_risk_params(tf)  # de config/risk.yaml
+        rp = _to_plain_dict(rp)  # convertir a dict para compatibilidad
         
         # lee de risk.yaml (pon defaults por si acaso)
-        fut = rp.get("futures", {})
-        LEV_MIN  = float(fut.get("leverage_min", 5.0))
-        LEV_MAX  = float(fut.get("leverage_max", 50.0))
-        LIQ_BUF  = float(fut.get("liq_buffer_atr", 3.0))
+        fut = _dig(rp, "futures", default={})
+        LEV_MIN  = float(_dig(fut, "leverage_min", default=5.0))
+        LEV_MAX  = float(_dig(fut, "leverage_max", default=50.0))
+        LIQ_BUF  = float(_dig(fut, "liq_buffer_atr", default=3.0))
         
         # Calcular SL y TP usando la lógica existente
-        k_sl = rp.get("k_sl", 2.0)
-        k_tp = rp.get("k_tp", 3.0)
-        risk_pct = rp.get("risk_pct", 0.02)
-        equity = rp.get("equity", 1000.0)
+        k_sl = _dig(rp, "k_sl", default=2.0)
+        k_tp = _dig(rp, "k_tp", default=3.0)
+        risk_pct = _dig(rp, "risk_pct", default=0.02)
+        equity = _dig(rp, "equity", default=1000.0)
         
         if side == 1:  # LONG
             sl_px = entry_px - k_sl * atr
