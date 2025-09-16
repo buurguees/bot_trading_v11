@@ -170,6 +170,11 @@ def compute_and_save(symbol, tf):
     df = fetch_candles(symbol, tf, last_ts)
     if df.empty: return 0
 
+    # Otra mejora de seguridad: asegurar que los datos numéricos estén correctamente convertidos
+    df[["open","high","low","close","volume"]] = (
+        df[["open","high","low","close","volume"]].apply(pd.to_numeric, errors="coerce")
+    )
+
     # Indicadores
     df["rsi14"] = rsi(df["close"], RSI_N)
     df["ema20"] = ema(df["close"], 20)
