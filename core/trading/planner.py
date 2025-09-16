@@ -1,6 +1,7 @@
 import os, json
 from typing import Optional, Dict, Any
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, bindparam
+from sqlalchemy.dialects.postgresql import JSONB
 from dotenv import load_dotenv
 from .position_sizer import load_risk_params, plan_from_price
 
@@ -55,7 +56,7 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             (created_at, bar_ts, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
             VALUES (now(), :bt, :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
             RETURNING id
-        """)
+        """).bindparams(bindparam("rs", type_=JSONB()))
         reason = {
             "direction_ver_id": direction_ver_id,
             "strength": strength,
