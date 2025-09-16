@@ -6,6 +6,23 @@ from dotenv import load_dotenv
 from .position_sizer import load_risk_params, plan_from_price
 
 load_dotenv("config/.env")
+
+def choose_leverage(entry_px: float, sl_px: float, side: int,
+                    atr: float, liq_buf_atr: float,
+                    lev_min: float, lev_max: float) -> float:
+    """
+    Aproximación para perps USDT lineales en modo aislado.
+    Distancia aproximada a liquidación ~ entry / L (ignorando margen de mantenimiento).
+    Exigimos que la distancia a liq sea MAYOR que (distancia al SL + buffer ATRs).
+    """
+    stop_dist = abs(entry_px - sl_px)
+    min_liq_dist = stop_dist + liq_buf_atr * atr
+    if min_liq_dist <= 0:
+        return float(lev_min)
+
+    lev_cap = entry_px / min_liq_dist           # L máximo permitido por buffer
+    L = max(lev_min, min(lev_max, float(lev_cap)))
+    return round(L, 2)
 ENGINE = create_engine(os.getenv("DB_URL"))
 
 def _get_entry_price(c, symbol: str, tf: str, ts) -> Optional[float]:
@@ -49,7 +66,46 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             raise RuntimeError("No se pudo obtener entry_px o ATR para planificar el trade.")
 
         rp = load_risk_params(tf)  # de config/risk.yaml
-        plan = plan_from_price(entry_px, atr, side, tf, rp)
+        
+        # lee de risk.yaml (pon defaults por si acaso)
+        fut = rp.get("futures", {})
+        LEV_MIN  = float(fut.get("leverage_min", 5.0))
+        LEV_MAX  = float(fut.get("leverage_max", 50.0))
+        LIQ_BUF  = float(fut.get("liq_buffer_atr", 3.0))
+        
+        # Calcular SL y TP usando la lógica existente
+        k_sl = rp.get("k_sl", 2.0)
+        k_tp = rp.get("k_tp", 3.0)
+        risk_pct = rp.get("risk_pct", 0.02)
+        equity = rp.get("equity", 1000.0)
+        
+        if side == 1:  # LONG
+            sl_px = entry_px - k_sl * atr
+            tp_px = entry_px + k_tp * atr
+        else:  # SHORT
+            sl_px = entry_px + k_sl * atr
+            tp_px = entry_px - k_tp * atr
+        
+        # Calcular leverage dinámico
+        leverage = choose_leverage(entry_px, sl_px, side, atr, LIQ_BUF, LEV_MIN, LEV_MAX)
+        
+        # tamaño de posición (no depende del leverage; el riesgo lo marca el SL)
+        # risk_pct * equity / distancia al SL
+        qty = (equity * risk_pct) / max(1e-9, abs(entry_px - sl_px))
+        
+        # guarda el razonamiento útil:
+        reason = {
+            "direction_ver_id": direction_ver_id,
+            "strength": float(strength),
+            "atr": float(atr),
+            "tf": tf,
+            "k_sl": float(k_sl),
+            "k_tp": float(k_tp),
+            "lev_min": float(LEV_MIN),
+            "lev_max": float(LEV_MAX),
+            "liq_buf_atr": float(LIQ_BUF),
+            "equity": float(equity),
+        }
 
         q = text("""
             INSERT INTO trading.TradePlans
@@ -57,16 +113,11 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             VALUES (now(), :bt, :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
             RETURNING id
         """).bindparams(bindparam("rs", type_=JSONB()))
-        reason = {
-            "direction_ver_id": direction_ver_id,
-            "strength": strength,
-            "atr": atr,
-            **plan["params_used"]
-        }
+        
         plan_id = c.execute(q, {
             "bt": ts, "s": symbol, "tf": tf, "sd": side,
-            "e": plan["entry_px"], "sl": plan["sl_px"], "tp": plan["tp_px"],
-            "r": plan["risk_pct"], "q": plan["qty"], "lv": plan["leverage"],
-            "mm": plan["margin_mode"], "rs": reason
+            "e": float(entry_px), "sl": float(sl_px), "tp": float(tp_px),
+            "r": float(risk_pct), "q": float(qty), "lv": float(leverage),
+            "mm": "isolated", "rs": reason
         }).scalar()
         return int(plan_id)
