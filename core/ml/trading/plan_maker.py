@@ -1,12 +1,24 @@
 import os
 from typing import Dict, Any, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, asdict
 from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.dialects.postgresql import JSONB
 from dotenv import load_dotenv
 
 load_dotenv("config/.env")
 ENGINE = create_engine(os.getenv("DB_URL"))
+
+def _to_plain_dict(obj):
+    """Convierte dataclasses / SimpleNamespace / objetos a dict recursivamente."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if is_dataclass(obj):
+        return asdict(obj)
+    if hasattr(obj, "__dict__"):
+        return {k: _to_plain_dict(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
+    return obj  # tipos primitivos
 
 # -- permite acceder a r["a"]["b"] o r.a.b indistintamente
 def _dig(obj, *path, default=None):
@@ -25,6 +37,8 @@ def make_trade_plan(symbol: str, tf: str, ts, side: int, strength: float,
     """
     Crea un plan de trade usando la función helper _dig para leer la configuración.
     """
+    risk = _to_plain_dict(risk)  # <--- clave
+    
     if side == 0:
         return -1
     
