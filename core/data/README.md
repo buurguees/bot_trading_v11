@@ -1,3 +1,5 @@
+core\data\README.md
+
 # Data Layer & Base de Datos
 
 Este módulo gestiona todo el ciclo de vida del dato: descarga histórica (Bitget, Futuros), ingesta incremental, actualización en tiempo real, alineación multi-TF y acceso estructurado a PostgreSQL.

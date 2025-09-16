@@ -41,6 +41,24 @@ python scripts/ml/train_agents.py
 python scripts/ml/retrain_agents.py
 ```
 
+### 🧠 Machine Learning
+```bash
+# Entrenar agente direccional
+python core/ml/training/train_direction.py
+
+# Entrenar agente de régimen
+python core/ml/training/train_regime.py
+
+# Entrenar agente de volatilidad
+python core/ml/training/train_volatility.py
+
+# Inferencia en tiempo real
+python core/ml/inference/infer_realtime.py
+
+# Ejecutar backtest
+python core/ml/backtests/run_backtest.py
+```
+
 ### 🗄️ Base de Datos
 ```bash
 # Inicializar base de datos
@@ -95,7 +113,34 @@ bot_trading_v11/
 │   │   ├── indicator_calculator.py  # Calculador de indicadores
 │   │   ├── features_updater.py     # Actualizador continuo de features
 │   │   └── README.md          # Documentación del módulo de features
-│   ├── ml/                    # Machine Learning (vacío - pendiente implementación)
+│   ├── ml/                    # Machine Learning
+│   │   ├── agents/            # Implementaciones de agentes
+│   │   │   ├── base_agent.py  # Interfaz BaseAgent
+│   │   │   ├── direction_xgb.py  # Agente direccional (XGBoost)
+│   │   │   ├── regime_kmeans.py  # Agente de régimen (KMeans)
+│   │   │   ├── volatility_quantile.py  # Agente de volatilidad
+│   │   │   └── execution_rules.py  # Agente de ejecución
+│   │   ├── backtests/         # Backtesting y análisis
+│   │   │   ├── run_backtest.py  # Ejecutor de backtests
+│   │   │   └── analyzers.py   # Métricas y análisis
+│   │   ├── datasets/          # Construcción de datasets
+│   │   │   ├── builder.py     # JOIN OHLCV+Features
+│   │   │   └── schema.md      # Especificación de columnas
+│   │   ├── ensemble/          # Combinación de señales
+│   │   │   └── weighted.py    # Ensemble ponderado
+│   │   ├── inference/         # Inferencia en tiempo real
+│   │   │   ├── infer_realtime.py  # Loop de inferencia
+│   │   │   └── postprocess.py  # Postprocesamiento
+│   │   ├── training/          # Entrenamiento de modelos
+│   │   │   ├── train_direction.py  # Entrenamiento direccional
+│   │   │   ├── train_regime.py  # Entrenamiento de régimen
+│   │   │   ├── train_volatility.py  # Entrenamiento de volatilidad
+│   │   │   └── registry.py     # Registro de versiones
+│   │   ├── utils/             # Utilidades ML
+│   │   │   ├── io.py          # Carga/guardado de artefactos
+│   │   │   ├── time.py        # Utilidades de tiempo
+│   │   │   └── seeds.py       # Control de aleatoriedad
+│   │   └── README.md          # Documentación del módulo ML
 │   ├── trading/               # Lógica de trading (vacío - pendiente implementación)
 │   └── control/               # Interfaz de control (vacío - pendiente implementación)
 ├── data/                      # Backups y datos procesados (vacío - se crea al ejecutar)
@@ -125,11 +170,15 @@ bot_trading_v11/
 #### ✅ **Completamente Implementado**
 - **Data Layer**: Descarga histórica, actualización en tiempo real, base de datos
 - **Features Module**: Cálculo de indicadores técnicos, actualización continua
+- **ML Module**: Agentes de ML, entrenamiento, inferencia, backtesting
+  - Agentes: direccional (XGBoost), régimen (KMeans), volatilidad, ejecución
+  - Entrenamiento: walk-forward, versionado, registro en DB
+  - Inferencia: tiempo real, postprocesamiento, ensemble
+  - Backtesting: análisis de performance, métricas
 - **Configuración**: Archivos YAML y variables de entorno
 - **Documentación**: READMEs detallados para cada módulo
 
 #### 🚧 **Pendiente de Implementación**
-- **ML Module**: Agentes PPO, entrenamiento, autolearn
 - **Trading Module**: Motor de trading, gestión de riesgos, decisiones
 - **Control Module**: Interfaz de Telegram, comandos
 - **Scripts**: Comandos de trading, reportes, ML

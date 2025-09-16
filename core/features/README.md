@@ -1,3 +1,5 @@
+core\features\README.md
+
 # Features Module - Cálculo y Actualización de Indicadores Técnicos
 
 Este módulo se encarga del cálculo y actualización continua de indicadores técnicos para todos los símbolos y timeframes configurados. Proporciona una capa de procesamiento robusta que convierte datos OHLCV en features utilizables por los agentes de ML.
