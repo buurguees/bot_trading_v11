@@ -58,7 +58,7 @@ def make_trade_plan(symbol: str, tf: str, ts, side: int, strength: float,
             tp_px = entry_px - k_tp * atr
         
         # Calcular leverage dinámico
-        leverage = _choose_leverage(entry_px, sl_px, side, atr, liq_buf, lev_min, lev_max)
+        leverage = _choose_leverage(entry_px, sl_px, side, atr, liq_buf, lev_min, lev_max, use_liq)
         
         # Calcular cantidad
         equity = _dig(risk, "portfolio", "equity", default=10000.0)
@@ -98,20 +98,61 @@ def make_trade_plan(symbol: str, tf: str, ts, side: int, strength: float,
 
 def _choose_leverage(entry_px: float, sl_px: float, side: int,
                     atr: float, liq_buf_atr: float,
-                    lev_min: float, lev_max: float) -> float:
+                    lev_min: float, lev_max: float, use_liq: bool = True) -> float:
     """
-    Aproximación para perps USDT lineales en modo aislado.
-    Distancia aproximada a liquidación ~ entry / L (ignorando margen de mantenimiento).
-    Exigimos que la distancia a liq sea MAYOR que (distancia al SL + buffer ATRs).
+    Calcula leverage dinámico con protección de liquidación para perps USDT lineales.
+    
+    Args:
+        entry_px: Precio de entrada
+        sl_px: Precio de stop loss
+        side: 1 para LONG, -1 para SHORT
+        atr: Average True Range
+        liq_buf_atr: Buffer de ATRs para protección de liquidación
+        lev_min: Leverage mínimo permitido
+        lev_max: Leverage máximo permitido
+        use_liq: Si usar protección de liquidación
+        
+    Returns:
+        Leverage calculado con clamp y protección de liquidación
     """
     stop_dist = abs(entry_px - sl_px)
+    
+    if not use_liq:
+        # Sin protección de liquidación, solo clamp básico
+        # Leverage sugerido basado en distancia al SL
+        lev_sugerido = entry_px / max(stop_dist, 1e-9)
+        lev = min(max(lev_sugerido, lev_min), lev_max)
+        return round(lev, 2)
+    
+    # Con protección de liquidación
     min_liq_dist = stop_dist + liq_buf_atr * atr
     if min_liq_dist <= 0:
         return float(lev_min)
 
-    lev_cap = entry_px / min_liq_dist           # L máximo permitido por buffer
-    L = max(lev_min, min(lev_max, float(lev_cap)))
-    return round(L, 2)
+    # Leverage máximo permitido por buffer de liquidación
+    lev_cap = entry_px / min_liq_dist
+    
+    # Clamp: min(max(lev_sugerido, lev_min), lev_max)
+    lev = min(max(lev_cap, lev_min), lev_max)
+    
+    # Verificación adicional de protección de liquidación
+    if lev > 0:
+        # Precio de liquidación aproximado (ignorando margen de mantenimiento)
+        liq_px = entry_px * (1 - 1/lev) if side == 1 else entry_px * (1 + 1/lev)
+        
+        # Distancia a liquidación
+        liq_dist = abs(entry_px - liq_px)
+        
+        # Asegurar que distancia a liquidación > distancia al SL + buffer
+        min_liq_dist_required = stop_dist + liq_buf_atr * atr
+        
+        if liq_dist < min_liq_dist_required:
+            # Reducir leverage hasta cumplir la condición
+            # lev_new = entry_px / min_liq_dist_required
+            lev_new = entry_px / min_liq_dist_required
+            lev = min(max(lev_new, lev_min), lev_max)
+    
+    return round(lev, 2)
 
 def _get_entry_price(c, symbol: str, tf: str, ts) -> float:
     """Obtiene el precio de entrada (close) para el timestamp dado."""
