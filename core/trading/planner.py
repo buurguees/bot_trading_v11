@@ -90,26 +90,23 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             raise RuntimeError("No se pudo obtener entry_px o ATR para planificar el trade.")
 
         rp = load_risk_params(tf)  # de config/risk.yaml
-        rp = _to_plain_dict(rp)  # convertir a dict para compatibilidad
         
-        # lee de risk.yaml (pon defaults por si acaso)
-        fut = _dig(rp, "futures", default={})
-        LEV_MIN  = float(_dig(fut, "leverage_min", default=5.0))
-        LEV_MAX  = float(_dig(fut, "leverage_max", default=50.0))
-        LIQ_BUF  = float(_dig(fut, "liq_buffer_atr", default=3.0))
-        
-        # Calcular SL y TP usando la lógica existente
-        k_sl = _dig(rp, "k_sl", default=2.0)
-        k_tp = _dig(rp, "k_tp", default=3.0)
-        risk_pct = _dig(rp, "risk_pct", default=0.02)
-        equity = _dig(rp, "equity", default=1000.0)
+        # Acceso directo a atributos del dataclass RiskParams
+        mmode   = rp.margin_mode
+        equity  = float(rp.equity)
+        risk_pct= float(rp.risk_pct)
+        LEV_MIN = 5.0                    # mínimo operativo (o léelo del YAML si lo tienes)
+        LEV_MAX = float(rp.lev_max)
+        LIQ_BUF = float(rp.liq_buf_atr)
+        K_SL    = float(rp.k_sl)
+        K_TP    = float(rp.k_tp)
         
         if side == 1:  # LONG
-            sl_px = entry_px - k_sl * atr
-            tp_px = entry_px + k_tp * atr
+            sl_px = entry_px - K_SL * atr
+            tp_px = entry_px + K_TP * atr
         else:  # SHORT
-            sl_px = entry_px + k_sl * atr
-            tp_px = entry_px - k_tp * atr
+            sl_px = entry_px + K_SL * atr
+            tp_px = entry_px - K_TP * atr
         
         # Calcular leverage dinámico
         leverage = choose_leverage(entry_px, sl_px, side, atr, LIQ_BUF, LEV_MIN, LEV_MAX)
@@ -124,8 +121,8 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             "strength": float(strength),
             "atr": float(atr),
             "tf": tf,
-            "k_sl": float(k_sl),
-            "k_tp": float(k_tp),
+            "k_sl": float(K_SL),
+            "k_tp": float(K_TP),
             "lev_min": float(LEV_MIN),
             "lev_max": float(LEV_MAX),
             "liq_buf_atr": float(LIQ_BUF),
@@ -134,15 +131,15 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
 
         q = text("""
             INSERT INTO trading.TradePlans
-            (created_at, bar_ts, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
-            VALUES (now(), :bt, :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
+            (created_at, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
+            VALUES (now(), :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
             RETURNING id
         """).bindparams(bindparam("rs", type_=JSONB()))
         
         plan_id = c.execute(q, {
-            "bt": ts, "s": symbol, "tf": tf, "sd": side,
+            "s": symbol, "tf": tf, "sd": side,
             "e": float(entry_px), "sl": float(sl_px), "tp": float(tp_px),
             "r": float(risk_pct), "q": float(qty), "lv": float(leverage),
-            "mm": "isolated", "rs": reason
+            "mm": mmode, "rs": reason
         }).scalar()
         return int(plan_id)
