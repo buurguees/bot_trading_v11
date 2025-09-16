@@ -69,13 +69,11 @@ Bot Trading v11 es un sistema autónomo para trading de futuros perpetuos en cri
 
 ```
 bot_trading_v11/
-├── agents/                     # Modelos ML entrenados
-│   ├── BTCUSDT_ppo_model.zip
-│   ├── ETHUSDT_ppo_model.zip
-│   └── ...
+├── agents/                     # Modelos ML entrenados (vacío - se crean al entrenar)
+├── automaticos/               # Scripts de automatización
+│   └── start_updater.ps1     # Script PowerShell para iniciar actualizador
 ├── config/                     # Configuraciones
-│   ├── .env.example           # Plantilla para variables sensibles
-│   ├── .env                   # Claves reales (no en git)
+│   ├── .env                   # Variables de entorno (no en git)
 │   ├── trading/               # Configuraciones de trading
 │   │   ├── symbols.yaml       # Símbolos, TFs, leverage (min/max)
 │   │   └── risk.yaml          # Gestión de riesgos
@@ -84,65 +82,64 @@ bot_trading_v11/
 │   │   └── rewards.yaml       # Recompensas/penalizaciones RL
 │   └── system/                # Configuraciones del sistema
 │       ├── paths.yaml         # Rutas para datos, agentes
-│       └── logging.yaml       # Configuración de logging
+│       ├── logging.yaml       # Configuración de logging
+│       ├── monitoring.yaml    # Configuración de monitoreo
+│       └── telegram.yaml      # Configuración de Telegram
 ├── core/                      # Lógica principal
 │   ├── data/                  # Manejo de datos
-│   │   ├── __init__.py
-│   │   ├── database.py        # Esquema PostgreSQL
+│   │   ├── database.py        # Esquema PostgreSQL y ORM
 │   │   ├── historical_downloader.py  # Descarga histórica (BitGet)
-│   │   ├── realtime_fetcher.py  # Datos en tiempo real (todos TFs)
-│   │   ├── data_updater.py     # Actualiza DB y .csv
-│   │   └── timeframe_aligner.py  # Alinea TFs
-│   ├── ml/                    # Machine Learning
-│   │   ├── __init__.py
-│   │   ├── reinforcement_agent.py  # Entorno Gym, agentes PPO
-│   │   ├── feature_engineer.py  # Features multi-TF
-│   │   └── autolearn.py        # Auto-mejora
-│   ├── trading/               # Lógica de trading
-│   │   ├── __init__.py
-│   │   ├── trading_engine.py   # Longs, shorts, PnL, leverage
-│   │   ├── risk_manager.py     # Gestión de riesgos
-│   │   └── decision_maker.py   # Decisiones autónomas
-│   └── control/               # Interfaz de control
-│       ├── __init__.py
-│       └── telegram_interface.py  # Bot Telegram
-├── data/                      # Backups y datos procesados
-│   ├── BTCUSDT/
-│   │   ├── BTCUSDT_1m.csv
-│   │   ├── BTCUSDT_5m.csv
-│   │   ├── BTCUSDT_aligned.csv
-│   │   └── ...
-│   ├── ETHUSDT/
-│   └── ...
+│   │   ├── realtime_updater.py  # Actualización en tiempo real
+│   │   └── README.md          # Documentación del módulo de datos
+│   ├── features/              # Cálculo de indicadores técnicos
+│   │   ├── indicator_calculator.py  # Calculador de indicadores
+│   │   ├── features_updater.py     # Actualizador continuo de features
+│   │   └── README.md          # Documentación del módulo de features
+│   ├── ml/                    # Machine Learning (vacío - pendiente implementación)
+│   ├── trading/               # Lógica de trading (vacío - pendiente implementación)
+│   └── control/               # Interfaz de control (vacío - pendiente implementación)
+├── data/                      # Backups y datos procesados (vacío - se crea al ejecutar)
 ├── db/                        # Migraciones de DB
 │   └── migrations/
-│       ├── env.py
-│       └── versions/
-├── scripts/                   # Scripts para comandos Telegram
-│   ├── __init__.py
+│       └── versions/          # Versiones de migraciones (vacío)
+├── scripts/                   # Scripts para comandos y automatización
 │   ├── initialization/        # Tareas iniciales
-│   │   ├── init_db.py        # Inicializa DB
-│   │   └── download_historical.py  # Descarga histórica
-│   ├── trading/              # Operaciones de trading
-│   │   ├── start_trading.py  # Inicia trading
-│   │   └── stop_trading.py   # Detiene trading
-│   ├── ml/                   # Entrenamiento ML
-│   │   ├── train_agents.py   # Entrena agentes
-│   │   └── retrain_agents.py  # Reentrena agentes
-│   └── reporting/            # Métricas y logs
-│       ├── status_report.py  # Reporte de estado
-│       └── fetch_logs.py     # Logs y trades
-├── tests/                     # Tests unitarios
-│   ├── __init__.py
-│   ├── test_data.py
-│   ├── test_ml.py
-│   └── test_trading.py
-├── docs/                      # Documentación
-│   └── README.md              # Este archivo
-├── Dockerfile                 # Despliegue
-├── requirements.txt           # Dependencias
-└── main.py                    # Entry point
+│   │   ├── init_db.sql        # Script SQL de inicialización
+│   │   └── README.md          # Documentación de inicialización
+│   ├── ml/                    # Scripts de ML (vacío - pendiente implementación)
+│   ├── ps/                    # Scripts de PowerShell (vacío)
+│   ├── reporting/             # Scripts de reportes (vacío - pendiente implementación)
+│   └── trading/               # Scripts de trading (vacío - pendiente implementación)
+├── tests/                     # Tests unitarios (vacío - pendiente implementación)
+├── docs/                      # Documentación (vacío)
+├── venv/                      # Entorno virtual Python
+├── .gitignore                 # Archivos ignorados por Git
+├── requirements.txt           # Dependencias Python
+├── setup_environment.md       # Guía de configuración del entorno
+├── test_setup.py             # Script de prueba de configuración
+└── README.md                  # Este archivo
 ```
+
+### 📊 Estado Actual de Implementación
+
+#### ✅ **Completamente Implementado**
+- **Data Layer**: Descarga histórica, actualización en tiempo real, base de datos
+- **Features Module**: Cálculo de indicadores técnicos, actualización continua
+- **Configuración**: Archivos YAML y variables de entorno
+- **Documentación**: READMEs detallados para cada módulo
+
+#### 🚧 **Pendiente de Implementación**
+- **ML Module**: Agentes PPO, entrenamiento, autolearn
+- **Trading Module**: Motor de trading, gestión de riesgos, decisiones
+- **Control Module**: Interfaz de Telegram, comandos
+- **Scripts**: Comandos de trading, reportes, ML
+- **Tests**: Tests unitarios y de integración
+
+#### 📁 **Directorios Vacíos (Se Crean Dinámicamente)**
+- `agents/` - Modelos ML entrenados
+- `data/` - Backups CSV de datos
+- `tests/` - Tests unitarios
+- `docs/` - Documentación adicional
 
 ## 🔄 Protocolos del Sistema
 
