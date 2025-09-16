@@ -1,5 +1,55 @@
 # Bot Trading v11 - Scalping Autónomo de Futuros con IA
 
+## 🎮 Comandos de Control Rápido
+
+### 📊 Gestión de Datos
+```bash
+# Descargar datos históricos (una sola vez)
+python core/data/historical_downloader.py
+
+# Actualizar datos en tiempo real (continuo)
+python core/data/realtime_updater.py
+
+# Una pasada de actualización de datos
+python core/data/realtime_updater.py --once
+```
+
+### 🧮 Gestión de Features/Indicadores
+```bash
+# Calcular indicadores iniciales (una sola vez)
+python core/features/indicator_calculator.py
+
+# Actualizar indicadores continuamente (recomendado)
+python core/features/features_updater.py
+
+# Una pasada de actualización de indicadores
+python core/features/features_updater.py --once
+```
+
+### 🤖 Control del Bot
+```bash
+# Iniciar bot completo
+python main.py
+
+# Ver estado del sistema
+python scripts/reporting/status_report.py
+
+# Entrenar agentes ML
+python scripts/ml/train_agents.py
+
+# Reentrenar agentes
+python scripts/ml/retrain_agents.py
+```
+
+### 🗄️ Base de Datos
+```bash
+# Inicializar base de datos
+python scripts/initialization/init_db.py
+
+# Verificar conexión a DB
+python -c "from core.data.database import ENGINE; print('DB OK' if ENGINE else 'DB Error')"
+```
+
 ## 🚀 Visión General
 
 Bot Trading v11 es un sistema autónomo para trading de futuros perpetuos en criptomonedas, enfocado en scalping (1m/5m) con confirmaciones de tendencias en timeframes superiores (15m, 1h, 4h, 1d). Utiliza aprendizaje por refuerzo (PPO) con agentes por símbolo que operan en paralelo, optimizando el balance según volatilidad y riesgo para maximizar rentabilidad. Controlado via Telegram, almacena datos en PostgreSQL con backups en .csv, y guarda las mejores/peores estrategias para aprendizaje continuo. Diseñado para ser robusto, escalable y "enterprise-grade".
