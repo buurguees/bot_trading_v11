@@ -1,0 +1,26 @@
+# monitoring.yaml - Configuración de monitoreo del sistema
+# Define umbrales para alertas (latencia, errores, recursos)
+# Usado por core/control/ y scripts/reporting/
+# Versión: 1.0.0
+
+version: "1.0.0"
+
+monitoring:
+  system:
+    max_cpu_usage: 0.80      # Máximo uso de CPU (rango: 0.5-0.9)
+    max_memory_usage: 0.80   # Máximo uso de memoria (rango: 0.5-0.9)
+    max_disk_usage: 0.90     # Máximo uso de disco (rango: 0.7-0.95)
+  api:
+    max_latency_ms: 1000     # Latencia máxima de API BitGet (rango: 500-2000 ms)
+    max_errors_per_hour: 5   # Máximo errores API por hora (rango: 3-10)
+  database:
+    max_query_time_ms: 500   # Tiempo máximo de query (rango: 200-1000 ms)
+    max_connections: 50      # Máximo conexiones simultáneas (rango: 20-100)
+  alerts:
+    telegram:                # Enviar alertas a Telegram
+      enabled: true
+      chat_id: 937027893     # ID del chat (de .env)
+      types:                 # Tipos de alertas
+        system: true         # Alertas de CPU, memoria, disco
+        api: true            # Alertas de latencia o errores API
+        database: true       # Alertas de queries lentas o conexiones

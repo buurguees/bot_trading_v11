@@ -1,0 +1,67 @@
+# Dependencias para bot_trading_v11
+# Python 3.10+ requerido
+
+# Trading y Exchange APIs
+ccxt>=4.2.0          # Conexión a BitGet (futuros perpetuos)
+
+# Base de Datos
+sqlalchemy>=2.0.0    # ORM para PostgreSQL
+psycopg2-binary>=2.9.0  # Adaptador PostgreSQL
+alembic>=1.8.0       # Migraciones DB
+
+# Machine Learning y Reinforcement Learning
+stable-baselines3>=2.0.0  # PPO para RL
+gym>=0.21.0          # Entorno para RL
+gymnasium>=0.29.0    # Entorno RL moderno (compatible con gym)
+
+# Análisis Técnico
+ta-lib>=0.4.0        # Indicadores técnicos (RSI, MACD, Bollinger, etc.)
+
+# Control y Comunicación
+python-telegram-bot>=20.0  # Control Telegram
+
+# Logging y Configuración
+structlog>=23.0.0    # Logging estructurado
+pyyaml>=6.0.0        # Manejo de YAML
+
+# Procesamiento de Datos
+numpy>=1.24.0        # Cálculos numéricos
+pandas>=2.0.0        # Manejo de datos
+scipy>=1.10.0        # Funciones científicas
+
+# Visualización y Reportes
+matplotlib>=3.7.0    # Gráficos para reportes
+seaborn>=0.12.0      # Visualizaciones estadísticas
+plotly>=5.15.0       # Gráficos interactivos
+pillow>=10.0.0       # Manejo de imágenes (gráficos)
+
+# Utilidades del Sistema
+python-dotenv>=1.0.0 # Manejo de variables de entorno
+schedule>=1.2.0      # Programación de tareas
+websockets>=11.0.0   # WebSocket para datos en tiempo real
+aiohttp>=3.8.0       # Cliente HTTP asíncrono
+
+# Testing
+pytest>=7.4.0        # Tests unitarios
+pytest-asyncio>=0.21.0  # Tests asíncronos
+pytest-cov>=4.1.0    # Cobertura de tests
+pytest-mock>=3.11.0  # Mocks para tests
+
+# Desarrollo y Calidad de Código
+black>=23.0.0         # Formateador de código
+flake8>=6.0.0        # Linter
+mypy>=1.5.0          # Type checking
+pre-commit>=3.3.0    # Hooks de pre-commit
+
+# Seguridad
+cryptography>=41.0.0  # Cifrado para API keys
+requests>=2.31.0     # Cliente HTTP
+
+# Procesamiento Paralelo
+multiprocessing-logging>=0.3.4  # Logging en multiprocessing
+
+# Notas de Instalación:
+# - ta-lib requiere instalación previa del binario en el sistema
+# - En Windows: descargar desde https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
+# - En Linux: sudo apt-get install libta-lib-dev
+# - En macOS: brew install ta-lib

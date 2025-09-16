@@ -1,0 +1,58 @@
+# symbols.yaml - Configuración de símbolos para trading de futuros perpetuos
+# Define símbolos, timeframes, leverage dinámico y parámetros de contrato
+# Usado por core/data/, core/ml/, core/trading/
+# Versión: 1.0.0 (rastreo de cambios)
+
+version: "1.0.0"
+
+defaults:
+  timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]  # Timeframes por defecto
+  min_leverage: 3                                    # Leverage mínimo por defecto
+  max_leverage: 50                                   # Leverage máximo por defecto
+  contract:                                          # Parámetros de contrato por defecto
+    min_order_size: 0.001                            # Tamaño mínimo de orden (lotes)
+    price_precision: 2                               # Decimales para precio
+
+symbols:
+  BTCUSDT:
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    min_leverage: 5
+    max_leverage: 80
+    contract:
+      min_order_size: 0.0001
+      price_precision: 2
+  ETHUSDT:
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    min_leverage: 3
+    max_leverage: 50
+    contract:
+      min_order_size: 0.01
+      price_precision: 2
+  ADAUSDT:
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    min_leverage: 3
+    max_leverage: 30
+    contract:
+      min_order_size: 1.0
+      price_precision: 4
+  SOLUSDT:
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    min_leverage: 5
+    max_leverage: 50
+    contract:
+      min_order_size: 0.1
+      price_precision: 3
+  DOGEUSDT:
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    min_leverage: 3
+    max_leverage: 20
+    contract:
+      min_order_size: 10.0
+      price_precision: 5
+  XRPUSDT:
+    timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"]
+    min_leverage: 3
+    max_leverage: 30
+    contract:
+      min_order_size: 1.0
+      price_precision: 4

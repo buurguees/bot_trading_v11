@@ -1,0 +1,73 @@
+
+# risk.yaml - Configuración de gestión de riesgos para trading de futuros
+# Define límites, stop-loss, take-profit y respuestas a emergencias
+# Usado por core/trading/risk_manager.py
+# Versión: 1.0.0
+
+version: "1.0.0"
+
+defaults:
+  max_position_size: 0.01    # Máximo 1% del capital por trade (rango: 0.005-0.05)
+  max_drawdown: 0.05        # Detiene trading si drawdown >5% (rango: 0.03-0.10)
+  atr_period: 14            # Período para ATR (rango: 10-20)
+  sl_multiplier: 2.0        # Stop-loss = ATR * multiplier (rango: 1.0-3.0)
+  tp_multiplier: 3.0        # Take-profit = ATR * multiplier (rango: 2.0-5.0)
+  emergency:                # Condiciones de emergencia
+    volatility_spike: 3.0   # Pausa si ATR > 3x media (rango: 2.0-5.0)
+    max_consecutive_losses: 5  # Pausa tras 5 pérdidas seguidas (rango: 3-10)
+
+symbols:
+  BTCUSDT:
+    max_position_size: 0.01
+    max_drawdown: 0.05
+    atr_period: 14
+    sl_multiplier: 2.0
+    tp_multiplier: 3.0
+    emergency:
+      volatility_spike: 3.0
+      max_consecutive_losses: 5
+  ETHUSDT:
+    max_position_size: 0.01
+    max_drawdown: 0.05
+    atr_period: 14
+    sl_multiplier: 2.0
+    tp_multiplier: 3.0
+    emergency:
+      volatility_spike: 3.0
+      max_consecutive_losses: 5
+  ADAUSDT:
+    max_position_size: 0.01
+    max_drawdown: 0.05
+    atr_period: 14
+    sl_multiplier: 2.0
+    tp_multiplier: 3.0
+    emergency:
+      volatility_spike: 3.0
+      max_consecutive_losses: 5
+  SOLUSDT:
+    max_position_size: 0.01
+    max_drawdown: 0.05
+    atr_period: 14
+    sl_multiplier: 2.0
+    tp_multiplier: 3.0
+    emergency:
+      volatility_spike: 3.0
+      max_consecutive_losses: 5
+  DOGEUSDT:
+    max_position_size: 0.01
+    max_drawdown: 0.05
+    atr_period: 14
+    sl_multiplier: 2.0
+    tp_multiplier: 3.0
+    emergency:
+      volatility_spike: 3.0
+      max_consecutive_losses: 5
+  XRPUSDT:
+    max_position_size: 0.01
+    max_drawdown: 0.05
+    atr_period: 14
+    sl_multiplier: 2.0
+    tp_multiplier: 3.0
+    emergency:
+      volatility_spike: 3.0
+      max_consecutive_losses: 5
