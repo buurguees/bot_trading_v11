@@ -114,58 +114,70 @@ class AuditLog(Base):
 Base.metadata.create_all(bind=engine)
 
 def ensure_indexes(conn):
-    """Crea índices idempotentes (IF NOT EXISTS) para acelerar lecturas comunes."""
-    # HistoricalData
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_historical_timestamp
-        ON trading."HistoricalData" USING btree (timestamp);
-    """))
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_hist_symbol_timeframe
-        ON trading."HistoricalData" USING btree (symbol, timeframe);
-    """))
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_hist_symbol_tf_ts
-        ON trading."HistoricalData" USING btree (symbol, timeframe, timestamp DESC);
-    """))
-    # covering (si tu Postgres >= 11)
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_historical_covering
-        ON trading."HistoricalData" USING btree (symbol, timeframe, timestamp)
-        INCLUDE (open, high, low, volume, close);
-    """))
+    """Crea índices idempotentes (IF NOT EXISTS) y sólo si existen las tablas."""
 
-    # Features
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_features_sym_tf_ts
-        ON trading."Features" USING btree (symbol, timeframe, timestamp DESC);
-    """))
+    def _table_exists(schema: str, table: str) -> bool:
+        return conn.execute(text(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = :s AND table_name = :t
+            )
+            """
+        ), {"s": schema, "t": table}).scalar()
 
-    # AgentPreds / AgentSignals
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_pred_ver_ts
-        ON trading."AgentPreds" (agent_version_id, timestamp DESC);
-    """))
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_signals_sym_tf_ts
-        ON trading."AgentSignals" (symbol, timeframe, timestamp DESC);
-    """))
-    # índice funcional sobre JSONB
-    conn.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_sig_meta_ts
-        ON trading."AgentSignals" ((meta->>'direction_ver_id'), timestamp DESC);
-    """))
+    # HistoricalData (estandarizado en minúsculas)
+    if _table_exists("trading", "historicaldata"):
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_historical_timestamp
+            ON trading.historicaldata (timestamp)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hist_symbol_timeframe
+            ON trading.historicaldata (symbol, timeframe)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_hist_symbol_tf_ts
+            ON trading.historicaldata (symbol, timeframe, timestamp DESC)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_historical_covering
+            ON trading.historicaldata (symbol, timeframe, timestamp)
+            INCLUDE (open, high, low, volume, close)
+        """))
 
-    # TradePlans: intentar con bar_ts; si falla, fallback a created_at
-    try:
+    # Features (si existe)
+    if _table_exists("trading", "features"):
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_features_sym_tf_ts
+            ON trading.features (symbol, timeframe, timestamp DESC)
+        """))
+
+    # AgentPreds / AgentSignals (si existen)
+    if _table_exists("trading", "agentpreds"):
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_agentpreds_ver_sym_tf_ts
+            ON trading.agentpreds (agent_version_id, symbol, timeframe, timestamp DESC)
+        """))
+    if _table_exists("trading", "agentsignals"):
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_signals_sym_tf_ts
+            ON trading.agentsignals (symbol, timeframe, timestamp DESC)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sig_meta_ts
+            ON trading.agentsignals ((meta->>'direction_ver_id'), timestamp DESC)
+        """))
+
+    # TradePlans (si existe)
+    if _table_exists("trading", "tradeplans"):
         conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_tradeplans_sym_tf_bar
-            ON trading."TradePlans" (symbol, timeframe, bar_ts DESC);
+            ON trading.tradeplans (symbol, timeframe, bar_ts DESC)
         """))
-    except Exception:
         conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_tradeplans_sym_tf_created
-            ON trading."TradePlans" (symbol, timeframe, created_at DESC);
+            ON trading.tradeplans (symbol, timeframe, created_at DESC)
         """))
 
 def get_engine():
