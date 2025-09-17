@@ -43,11 +43,23 @@ def add_snapshots(df_base: pd.DataFrame, symbol: str, high_tf: str, suffix: str)
         rows = c.execute(sql, {"s": symbol, "tf": high_tf}).fetchall()
     if not rows:
         return df_base
-    high = pd.DataFrame(rows, columns=["timestamp"] + FEATURES).sort_values("timestamp")
-    base = df_base.sort_values("timestamp")
+    high = pd.DataFrame(rows, columns=["timestamp"] + FEATURES)
+    # Asegurar que timestamp sea datetime y esté ordenado
+    high["timestamp"] = pd.to_datetime(high["timestamp"], utc=True)
+    high = high.sort_values("timestamp")
+    
+    base = df_base.copy()
+    base["timestamp"] = pd.to_datetime(base["timestamp"], utc=True)
+    base = base.sort_values("timestamp")
+    
+    # Renombrar columnas del snapshot antes del merge
+    high_suffix = high.copy()
+    for col in FEATURES:
+        high_suffix = high_suffix.rename(columns={col: f"{col}_{suffix}"})
+    
     merged = pd.merge_asof(
         base,
-        high.add_suffix(f"_{suffix}"),
+        high_suffix,
         on="timestamp",
         direction="backward",
         allow_exact_matches=True,
