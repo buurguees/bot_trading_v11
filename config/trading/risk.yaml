@@ -1,73 +1,84 @@
+# ============================================
+# Bot Trading v11 — Configuración de Riesgo
+# Enfoque: Futuros USDT (isolated)
+# ============================================
+version: 1
+env:
+  mode: "paper"          # "paper" | "live"
+  base_currency: "USDT"
+  allowed_timeframes: ["1m","5m","15m","1h","4h","1d"]
 
-# risk.yaml - Configuración de gestión de riesgos para trading de futuros
-# Define límites, stop-loss, take-profit y respuestas a emergencias
-# Usado por core/trading/risk_manager.py
-# Versión: 1.0.0
+portfolio:
+  initial_equity: 10000.0           # Solo referencia; en live se lee del exchange
+  risk_model:
+    method: "fixed_fractional"      # % de equity arriesgado por operación (según SL)
+    risk_pct: 0.003                 # 0.3% por trade
+    min_qty_usd: 5                  # tamaño mínimo razonable
+  exposure_limits:
+    max_positions: 6                # total simultáneas
+    max_positions_per_symbol: 2
+    max_alloc_per_symbol_pct: 0.50  # 50% del equity como tope por símbolo
+    max_gross_leverage: 12          # tope de apalancamiento agregado de la cartera
 
-version: "1.0.0"
+futures:
+  margin_mode: "isolated"           # aislado por posición
+  hedge_mode: false                 # true = long y short a la vez
+  leverage_min: 5                   # ✅ rango solicitado
+  leverage_max: 50                  # ✅ rango solicitado
+  liq_buffer_atr: 3.0               # colchón: distancia a liquidación > (distancia SL + 3*ATR)
+  use_leverage_liq_guard: true      # aplica la regla anterior siempre
+  fees:                             # aproximado; ajústalo a tus tarifas reales
+    taker: 0.0006                   # 6 bps
+    maker: 0.0002                   # 2 bps
+  slippage_bps: 2                   # 2 bps de deslizamiento asumido
+  funding_rate_cap: 0.0005          # 0.05% máx por período (para simulación)
+  reduce_only_on_tp: true
 
-defaults:
-  max_position_size: 0.01    # Máximo 1% del capital por trade (rango: 0.005-0.05)
-  max_drawdown: 0.05        # Detiene trading si drawdown >5% (rango: 0.03-0.10)
-  atr_period: 14            # Período para ATR (rango: 10-20)
-  sl_multiplier: 2.0        # Stop-loss = ATR * multiplier (rango: 1.0-3.0)
-  tp_multiplier: 3.0        # Take-profit = ATR * multiplier (rango: 2.0-5.0)
-  emergency:                # Condiciones de emergencia
-    volatility_spike: 3.0   # Pausa si ATR > 3x media (rango: 2.0-5.0)
-    max_consecutive_losses: 5  # Pausa tras 5 pérdidas seguidas (rango: 3-10)
+sl_tp:
+  use_atr: true
+  atr_period: 14
+  k_sl: 1.5                         # SL = entry ± 1.5*ATR
+  k_tp: 2.0                         # TP = entry ∓ 2.0*ATR
+  trailing:
+    enabled: true
+    trigger_rr: 1.0                 # activa trailing al alcanzar 1R
+    trail_by_atr: 1.0               # sigue el precio a 1*ATR
+    lock_profit_rr: 0.5             # al llegar a 0.5R, mueve a BE+ (si tiene sentido)
 
-symbols:
+filters:
+  min_strength: 0.15                # umbral de fuerza mínima del modelo
+  min_prob_up: 0.55                 # si es long: prob(up) >= 0.55 (para short se invierte)
+  cooldown_bars: 2                  # barras sin reentrar tras cerrar
+  allow_both_sides_same_bar: false
+
+circuit_breakers:
+  daily_max_drawdown_pct: 2.5       # pausa si el día cae >2.5%
+  daily_max_loss_trades: 8          # o si pierde N trades en el día
+  halt_minutes_on_trigger: 60       # tiempo de pausa
+  spread_bps_max: 10                # no operar si el spread > 10 bps
+  latency_ms_max: 500               # no operar si latencia > 500ms
+  inconsistent_signals_window_min: 10
+  inconsistent_signals_max: 3
+
+backtest:
+  include_fees: true
+  include_slippage: true
+  partial_fills: false
+  latency_ms: 100
+  warmup_bars: 100
+  risk_free_rate: 0.0
+
+# Overrides por símbolo (opcional)
+symbols_overrides:
   BTCUSDT:
-    max_position_size: 0.01
-    max_drawdown: 0.05
-    atr_period: 14
-    sl_multiplier: 2.0
-    tp_multiplier: 3.0
-    emergency:
-      volatility_spike: 3.0
-      max_consecutive_losses: 5
-  ETHUSDT:
-    max_position_size: 0.01
-    max_drawdown: 0.05
-    atr_period: 14
-    sl_multiplier: 2.0
-    tp_multiplier: 3.0
-    emergency:
-      volatility_spike: 3.0
-      max_consecutive_losses: 5
-  ADAUSDT:
-    max_position_size: 0.01
-    max_drawdown: 0.05
-    atr_period: 14
-    sl_multiplier: 2.0
-    tp_multiplier: 3.0
-    emergency:
-      volatility_spike: 3.0
-      max_consecutive_losses: 5
-  SOLUSDT:
-    max_position_size: 0.01
-    max_drawdown: 0.05
-    atr_period: 14
-    sl_multiplier: 2.0
-    tp_multiplier: 3.0
-    emergency:
-      volatility_spike: 3.0
-      max_consecutive_losses: 5
-  DOGEUSDT:
-    max_position_size: 0.01
-    max_drawdown: 0.05
-    atr_period: 14
-    sl_multiplier: 2.0
-    tp_multiplier: 3.0
-    emergency:
-      volatility_spike: 3.0
-      max_consecutive_losses: 5
+    futures:
+      leverage_max: 30              # Ejemplo: más conservador en BTC
+    sl_tp:
+      k_sl: 1.2
+      k_tp: 1.8
   XRPUSDT:
-    max_position_size: 0.01
-    max_drawdown: 0.05
-    atr_period: 14
-    sl_multiplier: 2.0
-    tp_multiplier: 3.0
-    emergency:
-      volatility_spike: 3.0
-      max_consecutive_losses: 5
+    futures:
+      leverage_min: 7
+      leverage_max: 25
+    filters:
+      min_strength: 0.20
