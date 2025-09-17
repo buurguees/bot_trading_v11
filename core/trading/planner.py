@@ -49,6 +49,24 @@ def choose_leverage(entry_px: float, sl_px: float, side: int,
     return round(L, 2)
 ENGINE = create_engine(os.getenv("DB_URL"))
 
+# Cache simple para saber si existe la columna bar_ts en trading.TradePlans
+_HAS_BAR_TS: Optional[bool] = None
+
+def _check_has_bar_ts(conn) -> bool:
+    global _HAS_BAR_TS
+    if _HAS_BAR_TS is not None:
+        return _HAS_BAR_TS
+    q = text(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema='trading' AND table_name='tradeplans' AND column_name='bar_ts'
+        LIMIT 1
+        """
+    )
+    _HAS_BAR_TS = conn.execute(q).fetchone() is not None
+    return _HAS_BAR_TS
+
 def _get_entry_price(c, symbol: str, tf: str, ts) -> Optional[float]:
     q = text("""
         SELECT close FROM trading.HistoricalData
@@ -129,17 +147,52 @@ def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
             "equity": float(equity),
         }
 
-        q = text("""
-            INSERT INTO trading.TradePlans
-            (created_at, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
-            VALUES (now(), :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
-            RETURNING id
-        """).bindparams(bindparam("rs", type_=JSONB()))
-        
-        plan_id = c.execute(q, {
-            "s": symbol, "tf": tf, "sd": side,
-            "e": float(entry_px), "sl": float(sl_px), "tp": float(tp_px),
-            "r": float(risk_pct), "q": float(qty), "lv": float(leverage),
-            "mm": mmode, "rs": reason
-        }).scalar()
+        # Insert con o sin bar_ts según exista la columna en la tabla
+        if _check_has_bar_ts(c):
+            q = text(
+                """
+                INSERT INTO trading.TradePlans
+                (created_at, bar_ts, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
+                VALUES (now(), :bt, :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
+                RETURNING id
+                """
+            ).bindparams(bindparam("rs", type_=JSONB()))
+            params = {
+                "bt": ts,
+                "s": symbol,
+                "tf": tf,
+                "sd": side,
+                "e": float(entry_px),
+                "sl": float(sl_px),
+                "tp": float(tp_px),
+                "r": float(risk_pct),
+                "q": float(qty),
+                "lv": float(leverage),
+                "mm": mmode,
+                "rs": reason,
+            }
+        else:
+            q = text(
+                """
+                INSERT INTO trading.TradePlans
+                (created_at, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
+                VALUES (now(), :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
+                RETURNING id
+                """
+            ).bindparams(bindparam("rs", type_=JSONB()))
+            params = {
+                "s": symbol,
+                "tf": tf,
+                "sd": side,
+                "e": float(entry_px),
+                "sl": float(sl_px),
+                "tp": float(tp_px),
+                "r": float(risk_pct),
+                "q": float(qty),
+                "lv": float(leverage),
+                "mm": mmode,
+                "rs": reason,
+            }
+
+        plan_id = c.execute(q, params).scalar()
         return int(plan_id)
