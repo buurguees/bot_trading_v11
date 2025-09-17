@@ -1,3 +1,8 @@
+-- 1) Si 'bar_ts' está en el JSON reason, úsalo primero
+UPDATE trading."TradePlans"
+SET bar_ts = (reason->>'bar_ts')::timestamptz
+WHERE bar_ts IS NULL AND reason ? 'bar_ts';
+
 -- Backfill rápido de bar_ts aproximado desde created_at (redondeado al minuto)
 UPDATE trading."TradePlans"
 SET bar_ts = date_trunc('minute', created_at)
