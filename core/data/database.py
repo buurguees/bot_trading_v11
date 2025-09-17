@@ -23,9 +23,6 @@ Base = declarative_base()
 class HistoricalData(Base):
     __tablename__ = "HistoricalData"
     __table_args__ = (
-        Index('idx_historical_symbol_timeframe', "symbol", "timeframe"),
-        Index('idx_historical_timestamp', "timestamp"),
-        Index('idx_historical_covering', "symbol", "timeframe", "timestamp", "close"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -49,9 +46,6 @@ class HistoricalData(Base):
 class Trades(Base):
     __tablename__ = "Trades"
     __table_args__ = (
-        Index('idx_trades_symbol', "symbol"),
-        Index('idx_trades_entry_timestamp', "entry_timestamp"),
-        Index('idx_trades_covering', "symbol", "entry_timestamp", "side", "pnl"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -77,9 +71,6 @@ class Trades(Base):
 class MLStrategies(Base):
     __tablename__ = "MLStrategies"
     __table_args__ = (
-        Index('idx_strategies_symbol', "symbol"),
-        Index('idx_strategies_timestamp', "timestamp"),
-        Index('idx_strategies_covering', "symbol", "timestamp", "action", "pnl"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -108,7 +99,6 @@ class MLStrategies(Base):
 class AuditLog(Base):
     __tablename__ = "AuditLog"
     __table_args__ = (
-        Index('idx_auditlog_timestamp', "timestamp"),
         {"schema": "trading"}
     )
 
