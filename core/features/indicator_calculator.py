@@ -28,7 +28,7 @@ def read_symbols_and_tfs(path=SYMBOLS_YAML):
 
 def last_feat_ts(symbol, tf):
     q = text("""
-        SELECT MAX(timestamp) FROM trading.Features
+        SELECT MAX(timestamp) FROM trading.features
         WHERE symbol=:s AND timeframe=:tf
     """)
     with ENGINE.begin() as c:
@@ -40,7 +40,7 @@ def fetch_candles(symbol, tf, since_ts):
     if since_ts is None:
         q = text(f"""
             SELECT timestamp, open, high, low, close, volume
-            FROM trading.HistoricalData
+            FROM trading.historicaldata
             WHERE symbol=:s AND timeframe=:tf
             ORDER BY timestamp DESC
             LIMIT {5000 + WARMUP}
@@ -48,7 +48,7 @@ def fetch_candles(symbol, tf, since_ts):
     else:
         q = text("""
             SELECT timestamp, open, high, low, close, volume
-            FROM trading.HistoricalData
+            FROM trading.historicaldata
             WHERE symbol=:s AND timeframe=:tf
               AND timestamp >= :since
             ORDER BY timestamp ASC
@@ -138,7 +138,7 @@ def supertrend(df, n=10, mult=3.0):
 
 # ---------- Persistencia ----------
 UPSERT = text("""
-INSERT INTO trading.Features(
+INSERT INTO trading.features(
   symbol, timeframe, timestamp,
   rsi14, ema20, ema50, ema200, macd, macd_signal, macd_hist,
   atr14, bb_mid, bb_upper, bb_lower, obv, supertrend, st_dir
