@@ -32,7 +32,7 @@ def fetch_base(symbol: str, tf: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 def add_snapshots(df_base: pd.DataFrame, symbol: str, high_tf: str, suffix: str) -> pd.DataFrame:
-    # Trae features del TF alto y las proyecta por "last value carried forward"
+    # Trae features del TF alto y las proyecta por merge_asof backward (LEFT) + ffill
     sql = text(f"""
     SELECT timestamp, {', '.join(FEATURES)}
     FROM trading.features
@@ -43,13 +43,18 @@ def add_snapshots(df_base: pd.DataFrame, symbol: str, high_tf: str, suffix: str)
         rows = c.execute(sql, {"s": symbol, "tf": high_tf}).fetchall()
     if not rows:
         return df_base
-    high = pd.DataFrame(rows, columns=["timestamp"] + FEATURES).set_index("timestamp")
-    # Reindex al índice temporal base haciendo 'ffill'
-    base = df_base.set_index("timestamp")
-    # Alinea por tiempo (join asof hacia atrás)
-    merged = base.join(high.add_suffix(f"_{suffix}"), how="left")
-    merged = merged.ffill()
-    merged.reset_index(inplace=True)
+    high = pd.DataFrame(rows, columns=["timestamp"] + FEATURES).sort_values("timestamp")
+    base = df_base.sort_values("timestamp")
+    merged = pd.merge_asof(
+        base,
+        high.add_suffix(f"_{suffix}"),
+        on="timestamp",
+        direction="backward",
+        allow_exact_matches=True,
+    )
+    # forward fill sólo columnas del snapshot
+    snap_cols = [f"{c}_{suffix}" for c in FEATURES]
+    merged[snap_cols] = merged[snap_cols].ffill()
     return merged
 
 def build_dataset(symbol: str, tf_base: str, use_snapshots: bool = True) -> pd.DataFrame:

@@ -1,4 +1,4 @@
-import os, pickle, pandas as pd
+import os, pickle, pandas as pd, yaml, argparse
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -18,19 +18,56 @@ SYMBOL = os.getenv("ML_SYMBOL", "BTCUSDT")
 TF     = os.getenv("ML_TF", "1m")
 H      = int(os.getenv("ML_H", "1"))  # horizonte en barras
 
+def load_yaml(path: str):
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    except Exception:
+        pass
+    return {}
+
 def make_label(df: pd.DataFrame, h: int = 1) -> pd.Series:
     close_lead = df["close"].shift(-h)
     return (close_lead > df["close"]).astype(int)
 
 def main():
-    set_global_seeds(42)
-    df = build_dataset(SYMBOL, TF, use_snapshots=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbol", default=SYMBOL)
+    parser.add_argument("--tf", default=TF)
+    parser.add_argument("--horizon", type=int, default=H)
+    parser.add_argument("--from", dest="dt_from", default=None)
+    parser.add_argument("--to", dest="dt_to", default=None)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-bars", type=int, default=None, help="Límite de filas; 0 o None = usar todo el histórico")
+    args, _ = parser.parse_known_args()
+
+    sym = args.symbol
+    tf  = args.tf
+    h   = int(args.horizon)
+
+    set_global_seeds(args.seed)
+    df = build_dataset(sym, tf, use_snapshots=True)
     if df.empty:
         print("Dataset vacío.")
         return
 
+    # Cap opcional de filas
+    max_bars = args.max_bars
+    if max_bars is None:
+        cfg = load_yaml("config/ml/training.yaml")
+        max_bars = (
+            cfg.get("training", {})
+               .get("modes", {})
+               .get("historical", {})
+               .get("max_bars", None)
+        )
+    if max_bars and int(max_bars) > 0:
+        df = df.tail(int(max_bars))
+    print(f"[train_direction] dataset total={len(df)} rows  (max_bars={max_bars})")
+
     # label y features (solo filas completas)
-    df["y"] = make_label(df, H)
+    df["y"] = make_label(df, h)
     df = df.dropna()
     feat_cols = FEATURES[:]  # solo TF base + (si añadiste snapshots, puedes incluir los sufijos)
     # Para empezar simple: sin sufijos de TF alto. Luego los añadimos.
@@ -70,7 +107,7 @@ def main():
 
     # Guardar artefacto + registrar versión
     os.makedirs("artifacts/direction", exist_ok=True)
-    artifact_uri = f"artifacts/direction/{SYMBOL}_{TF}_H{H}_logreg.pkl"
+    artifact_uri = f"artifacts/direction/{sym}_{tf}_H{h}_logreg.pkl"
     
     # Guardar modelo y scaler juntos
     model_data = {
@@ -84,7 +121,7 @@ def main():
     ver_id   = register_version(
         agent_id=agent_id,
         version="v1.0.0",
-        params={"symbol": SYMBOL, "tf": TF, "h": H, "model":"LogReg"},
+        params={"symbol": sym, "timeframe": tf, "horizon": h, "model":"LogReg"},
         artifact_uri=artifact_uri,
         train_start=df["timestamp"].min(),
         train_end=df["timestamp"].max(),

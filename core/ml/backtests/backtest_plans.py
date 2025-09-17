@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from sqlalchemy import text
 from core.data.database import get_engine
+from .strategy_memory import update_memory
 
 # -------------------------
 # Utilidades / Config
@@ -81,20 +82,24 @@ def load_ohlcv(conn, symbol, tf, start_ts, end_ts):
     return df
 
 def load_plans(conn, symbol, tf, start_ts, end_ts):
-    q = text("""
-        SELECT id, created_at, bar_ts, symbol, timeframe, side, entry_px, sl_px, tp_px, qty, leverage, reason
-        FROM trading.TradePlans
-        WHERE symbol=:s AND timeframe=:tf
-          AND created_at BETWEEN :a AND :b
-          AND status IN ('planned','simulated')
-        ORDER BY created_at ASC
-    """)
-    df = pd.read_sql(q, conn, params={"s":symbol, "tf":tf, "a":start_ts, "b":end_ts})
-    # asegurar bar_ts: si viene nulo, usar created_at truncado a minuto
-    if "bar_ts" in df.columns:
-        df["bar_ts"] = pd.to_datetime(df["bar_ts"]).fillna(pd.to_datetime(df["created_at"]).dt.floor("min"))
-    else:
-        df["bar_ts"] = pd.to_datetime(df["created_at"]).dt.floor("min")
+    sql = """
+    SELECT id, symbol, timeframe, bar_ts, side,
+           entry_px, sl_px, tp_px, qty, leverage, status, reason
+    FROM trading.tradeplans
+    WHERE symbol = %(symbol)s
+      AND timeframe = %(tf)s
+      AND bar_ts >= %(from)s AND bar_ts < %(to)s
+      AND status IN ('planned','openable')
+    ORDER BY bar_ts
+    """
+    rng = {"from": start_ts, "to": end_ts}
+    df = pd.read_sql(sql, conn, params=dict(symbol=symbol, tf=tf, **rng))
+    if df.empty:
+        return df
+    df["bar_ts"] = pd.to_datetime(df["bar_ts"], utc=True)
+    df = df.sort_values(["bar_ts", "id"]).drop_duplicates(
+        subset=["symbol", "timeframe", "bar_ts", "side"], keep="last"
+    )
     return df
 
 def simulate_symbol_tf(conn, symbol, tf, from_ts, to_ts, fees_bps, slip_bps, mmr, max_hold_bars,
@@ -232,41 +237,94 @@ def simulate_symbol_tf(conn, symbol, tf, from_ts, to_ts, fees_bps, slip_bps, mmr
         "net_pnl": net,
         "win_rate": win_rate,
         "max_dd": max_dd,
+        "fees_bps": fees_bps,
+        "slip_bps": slip_bps,
+        "max_hold_bars": max_hold_bars,
+        "metrics": {},
         "comment": (
-            f"fees_bps={fees_bps}, slip_bps={slip_bps}, mmr={mmr}, max_hold_bars={max_hold_bars}, "
-            f"funding_bps_8h={funding_bps_8h}, sharpe={sharpe:.4f}, liq_pct={(liq_count/len(trades)) if trades else 0.0:.4f}"
+            f"fees_bps={fees_bps}, slip_bps={slip_bps}, mmr={mmr}, max_hold_bars={max_hold_bars}"
         )
     }
     return summary, trades
 
 def write_results(conn, summary, trades):
+    """
+    Guarda el resumen del backtest y sus trades.
+    SQLAlchemy 2.x: usar sqlalchemy.text() + parámetros :nombre.
+    Se adapta al esquema existente (Backtests/BacktestTrades).
+    """
+
+    # --- INSERT resumen acorde a scripts/maintenance/create_backtest_tables.sql ---
     ins_bt = text("""
-        INSERT INTO trading.Backtests(symbol,timeframe,from_ts,to_ts,n_trades,gross_pnl,fees,net_pnl,win_rate,max_dd,comment)
-        VALUES (:s,:tf,:a,:b,:n,:gp,:f,:np,:wr,:dd,:c)
+        INSERT INTO trading.backtests
+        (symbol, timeframe, from_ts, to_ts,
+         n_trades, gross_pnl, fees, net_pnl, win_rate, max_dd, comment)
+        VALUES (:s, :tf, :a, :b,
+                :n, :gp, :f, :np, :wr, :dd, :c)
         RETURNING id
     """)
-    bt_id = conn.execute(ins_bt, {
-        "s":summary["symbol"], "tf":summary["timeframe"],
-        "a":summary["from_ts"], "b":summary["to_ts"],
-        "n":summary["n_trades"], "gp":summary["gross_pnl"], "f":summary["fees"],
-        "np":summary["net_pnl"], "wr":summary["win_rate"], "dd":summary["max_dd"],
-        "c":summary["comment"]
-    }).scalar()
 
+    f_ts = summary["from_ts"]
+    t_ts = summary["to_ts"]
+    if hasattr(f_ts, "to_pydatetime"): f_ts = f_ts.to_pydatetime()
+    if hasattr(t_ts, "to_pydatetime"): t_ts = t_ts.to_pydatetime()
+
+    bt_id = conn.execute(ins_bt, {
+        "s": summary["symbol"],
+        "tf": summary["timeframe"],
+        "a": f_ts,
+        "b": t_ts,
+        "n": summary["n_trades"],
+        "gp": summary["gross_pnl"],
+        "f": summary["fees"],
+        "np": summary["net_pnl"],
+        "wr": summary.get("win_rate", 0.0),
+        "dd": summary.get("max_dd", 0.0),
+        "c": summary.get("comment", ""),
+    }).scalar_one()
+
+    # --- INSERT trades ---
     ins_tr = text("""
-        INSERT INTO trading.BacktestTrades(
-            backtest_id, plan_id, symbol, timeframe, entry_ts, exit_ts, side, entry_px, exit_px, qty, leverage, fee, pnl, reason
+        INSERT INTO trading.backtesttrades(
+            backtest_id, plan_id, symbol, timeframe,
+            entry_ts, exit_ts, side, entry_px, exit_px,
+            qty, leverage, fee, pnl, reason
         ) VALUES (
-            :bt, :pid, :s, :tf, :et, :xt, :sd, :ep, :xp, :q, :lv, :fe, :pl, :rs::jsonb
+            :bt, :pid, :s, :tf,
+            :et, :xt, :sd, :ep, :xp,
+            :q, :lv, :fe, :pl, CAST(:rs AS JSONB)
         )
     """)
+
     for t in trades:
+        et = t["entry_ts"]; xt = t["exit_ts"]
+        if hasattr(et, "to_pydatetime"): et = et.to_pydatetime()
+        if hasattr(xt, "to_pydatetime"): xt = xt.to_pydatetime()
+
         conn.execute(ins_tr, {
-            "bt": bt_id, "pid": t["plan_id"], "s": t["symbol"], "tf": t["timeframe"],
-            "et": t["entry_ts"], "xt": t["exit_ts"], "sd": t["side"],
-            "ep": t["entry_px"], "xp": t["exit_px"], "q": t["qty"], "lv": t["leverage"],
-            "fe": t["fee"], "pl": t["pnl"], "rs": json.dumps(t["reason"])
+            "bt": bt_id,
+            "pid": t["plan_id"],
+            "s":   t["symbol"],
+            "tf":  t["timeframe"],
+            "et":  et,
+            "xt":  xt,
+            "sd":  t["side"],
+            "ep":  t["entry_px"],
+            "xp":  t["exit_px"],
+            "q":   t["qty"],
+            "lv":  t["leverage"],
+            "fe":  t["fee"],
+            "pl":  t["pnl"],
+            "rs":  json.dumps(t.get("reason", {})),
         })
+
+    # actualizar memoria de estrategia (súper simple)
+    update_memory(conn, summary["symbol"], summary["timeframe"], trades)
+
+    try:
+        conn.commit()
+    except Exception:
+        pass
 
 def main():
     ap = argparse.ArgumentParser()
@@ -300,6 +358,16 @@ def main():
 
     engine = get_engine()
     with engine.begin() as conn:
+        # -- asegurar índices (minúsculas)
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_features_sym_tf_ts
+            ON trading.features (symbol, timeframe, timestamp DESC);
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_tradeplans_sym_tf_bar
+            ON trading.tradeplans (symbol, timeframe, bar_ts DESC);
+        """))
+
         summary, trades = simulate_symbol_tf(
             conn, args.symbol, args.tf, from_ts, to_ts,
             fees_bps, slip_bps, mmr, args.max_hold_bars, funding_bps_8h=funding8
