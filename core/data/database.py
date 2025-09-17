@@ -123,6 +123,71 @@ class AuditLog(Base):
 # Crear tablas si no existen
 Base.metadata.create_all(bind=engine)
 
+def ensure_indexes(conn):
+    """Crea índices idempotentes (IF NOT EXISTS) para acelerar lecturas comunes."""
+    # HistoricalData
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_historical_timestamp
+        ON trading."HistoricalData" USING btree (timestamp);
+    """))
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_hist_symbol_timeframe
+        ON trading."HistoricalData" USING btree (symbol, timeframe);
+    """))
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_hist_symbol_tf_ts
+        ON trading."HistoricalData" USING btree (symbol, timeframe, timestamp DESC);
+    """))
+    # covering (si tu Postgres >= 11)
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_historical_covering
+        ON trading."HistoricalData" USING btree (symbol, timeframe, timestamp)
+        INCLUDE (open, high, low, volume, close);
+    """))
+
+    # Features
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_features_sym_tf_ts
+        ON trading."Features" USING btree (symbol, timeframe, timestamp DESC);
+    """))
+
+    # AgentPreds / AgentSignals
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_pred_ver_ts
+        ON trading."AgentPreds" (agent_version_id, timestamp DESC);
+    """))
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_signals_sym_tf_ts
+        ON trading."AgentSignals" (symbol, timeframe, timestamp DESC);
+    """))
+    # índice funcional sobre JSONB
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_sig_meta_ts
+        ON trading."AgentSignals" ((meta->>'direction_ver_id'), timestamp DESC);
+    """))
+
+    # TradePlans: intentar con bar_ts; si falla, fallback a created_at
+    try:
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_tradeplans_sym_tf_bar
+            ON trading."TradePlans" (symbol, timeframe, bar_ts DESC);
+        """))
+    except Exception:
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_tradeplans_sym_tf_created
+            ON trading."TradePlans" (symbol, timeframe, created_at DESC);
+        """))
+
+def get_engine():
+    return engine
+
+# Asegurar índices al inicio (idempotente)
+try:
+    with engine.begin() as _c:
+        ensure_indexes(_c)
+except Exception as _e:
+    logger.warning(f"No se pudieron asegurar índices al inicio: {_e}")
+
 def get_db() -> Session:
     """Obtiene una sesión de DB para uso en dependencias."""
     db = SessionLocal()
