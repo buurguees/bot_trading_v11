@@ -159,15 +159,27 @@ async def backfill_symbol_tf(symbol: str, timeframe: str, since_days: int):
 
     logger.info(f"[{symbol} {timeframe}] Guardadas ~{total_saved} velas nuevas.")
 
+def read_symbols_and_tfs(config_path: str = CONFIG_PATH):
+    """Lee símbolos y timeframes desde el archivo de configuración"""
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    
+    default_tfs = cfg.get("defaults", {}).get("timeframes", ["1m"])
+    symbols_cfg: Dict = cfg.get("symbols", {})
+    
+    result = []
+    for sym, stg in symbols_cfg.items():
+        tfs = stg.get("timeframes", default_tfs)
+        ccxt_symbol = stg.get("ccxt_symbol") or sym
+        result.append((ccxt_symbol, tfs))
+    
+    return result
+
 async def run_all(config_path: str = CONFIG_PATH, since_days: int = DEFAULT_SINCE_DAYS):
     # Carga mercados una sola vez (necesario para Bitget y símbolos swap)
     await exchange.load_markets()
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-
-    default_tfs = cfg.get("defaults", {}).get("timeframes", ["1m"])
-    symbols_cfg: Dict = cfg.get("symbols", {})
+    symbols_tfs = read_symbols_and_tfs(config_path)
 
     sem = asyncio.Semaphore(MAX_CONCURRENT)
     tasks = []
@@ -177,12 +189,8 @@ async def run_all(config_path: str = CONFIG_PATH, since_days: int = DEFAULT_SINC
             for tf in tfs:
                 await backfill_symbol_tf(sym, tf, since_days)
 
-    for sym, stg in symbols_cfg.items():
-        tfs = stg.get("timeframes", default_tfs)
-        # Asegúrate de que los símbolos sean válidos para Bitget (swap).
-        # Ejemplo para USDT-margined swap en CCXT/Bitget: "BTC/USDT:USDT"
-        ccxt_symbol = stg.get("ccxt_symbol") or sym  # permite mapear en YAML si hace falta
-        tasks.append(worker(ccxt_symbol, tfs))
+    for sym, tfs in symbols_tfs:
+        tasks.append(worker(sym, tfs))
 
     await asyncio.gather(*tasks)
     logger.info("Descarga histórica completada para todos los símbolos/timeframes.")
