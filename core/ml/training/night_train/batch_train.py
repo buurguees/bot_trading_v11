@@ -150,96 +150,103 @@ def train_one_combo(cfg: TrainCfg, db_url: str) -> Dict:
     
     # Conexión por proceso
     eng = create_engine(db_url, pool_pre_ping=True, future=True)
+    
+    # Cargar datos
     with eng.connect() as c:
         df = load_dataset(c, cfg.symbol, cfg.timeframe, cfg.days_back, cfg.horizon)
 
-        if len(df) < cfg.min_rows:
-            return {"status": "skipped", "reason": f"pocos datos ({len(df)})", "symbol": cfg.symbol, "tf": cfg.timeframe, "h": cfg.horizon}
+    if len(df) < cfg.min_rows:
+        return {"status": "skipped", "reason": f"pocos datos ({len(df)})", "symbol": cfg.symbol, "tf": cfg.timeframe, "h": cfg.horizon}
 
-        # Selección de columnas: quitamos metadata
-        drop_cols = {"timestamp", "y", "close_now", "close_fwd", "symbol", "timeframe"}
-        feat_cols = [col for col in df.columns if col not in drop_cols]
+    # Selección de columnas: quitamos metadata
+    drop_cols = {"timestamp", "y", "close_now", "close_fwd", "symbol", "timeframe"}
+    feat_cols = [col for col in df.columns if col not in drop_cols]
 
-        # Quitar columnas con demasiados NaN
-        keep = []
-        for col in feat_cols:
-            frac = df[col].notna().mean()
-            if frac >= cfg.dropna_cols_min_fraction:
-                keep.append(col)
-        X = df[keep].astype(float).ffill().bfill().values
-        y = df["y"].astype(int).values
-        t = df["timestamp"]
+    # Quitar columnas con demasiados NaN
+    keep = []
+    for col in feat_cols:
+        frac = df[col].notna().mean()
+        if frac >= cfg.dropna_cols_min_fraction:
+            keep.append(col)
+    X = df[keep].astype(float).ffill().bfill().values
+    y = df["y"].astype(int).values
+    t = df["timestamp"]
 
-        # Pipeline
-        pipe = Pipeline([
-            ("sc", StandardScaler()),
-            ("clf", LogisticRegression(max_iter=cfg.max_iter))
-        ])
+    # Pipeline
+    pipe = Pipeline([
+        ("sc", StandardScaler()),
+        ("clf", LogisticRegression(max_iter=cfg.max_iter))
+    ])
 
-        # Grid search manual (pequeño) con walk-forward
-        best_params, best_score = None, -np.inf
-        scores = []
-        for params in itertools.product(*cfg.param_grid.values()):
-            cand = dict(zip(cfg.param_grid.keys(), params))
-            fold_scores = []
-            for tr_idx, va_idx in iter_time_splits(t, cfg.n_splits, cfg.embargo_minutes):
-                if len(va_idx) == 0:  # por si acaso
-                    continue
-                Xtr, ytr = X[tr_idx], y[tr_idx]
-                Xva, yva = X[va_idx], y[va_idx]
-                model = Pipeline([("sc", StandardScaler()),
-                                  ("clf", LogisticRegression(max_iter=cfg.max_iter, **cand))])
-                model.fit(Xtr, ytr)
-                p = model.predict_proba(Xva)[:,1]
-                auc = roc_auc_score(yva, p)
-                fold_scores.append(auc)
-            if fold_scores:
-                m = float(np.mean(fold_scores))
-                scores.append((cand, m))
-                if m > best_score:
-                    best_score, best_params = m, cand
+    # Grid search manual (pequeño) con walk-forward
+    best_params, best_score = None, -np.inf
+    scores = []
+    for params in itertools.product(*cfg.param_grid.values()):
+        cand = dict(zip(cfg.param_grid.keys(), params))
+        
+        # Manejar class_weight null correctamente
+        if cand.get('class_weight') == 'null' or cand.get('class_weight') is None:
+            cand['class_weight'] = None
+        
+        fold_scores = []
+        for tr_idx, va_idx in iter_time_splits(t, cfg.n_splits, cfg.embargo_minutes):
+            if len(va_idx) == 0:  # por si acaso
+                continue
+            Xtr, ytr = X[tr_idx], y[tr_idx]
+            Xva, yva = X[va_idx], y[va_idx]
+            model = Pipeline([("sc", StandardScaler()),
+                              ("clf", LogisticRegression(max_iter=cfg.max_iter, **cand))])
+            model.fit(Xtr, ytr)
+            p = model.predict_proba(Xva)[:,1]
+            auc = roc_auc_score(yva, p)
+            fold_scores.append(auc)
+        if fold_scores:
+            m = float(np.mean(fold_scores))
+            scores.append((cand, m))
+            if m > best_score:
+                best_score, best_params = m, cand
 
-        # Reentreno final con mejores hiperparámetros
-        final_model = Pipeline([("sc", StandardScaler()),
-                                ("clf", LogisticRegression(max_iter=cfg.max_iter, **(best_params or {})))])
-        final_model.fit(X, y)
+    # Reentreno final con mejores hiperparámetros
+    final_model = Pipeline([("sc", StandardScaler()),
+                            ("clf", LogisticRegression(max_iter=cfg.max_iter, **(best_params or {})))])
+    final_model.fit(X, y)
 
-        # Métricas finales en la cola (10% últimos)
-        tail = max(2000, int(len(y)*0.1))
-        Xte, yte = X[-tail:], y[-tail:]
-        p = final_model.predict_proba(Xte)[:,1]
-        auc = float(roc_auc_score(yte, p))
-        brier = float(brier_score_loss(yte, p))
-        acc = float(accuracy_score(yte, (p>=0.5).astype(int)))
+    # Métricas finales en la cola (10% últimos)
+    tail = max(2000, int(len(y)*0.1))
+    Xte, yte = X[-tail:], y[-tail:]
+    p = final_model.predict_proba(Xte)[:,1]
+    auc = float(roc_auc_score(yte, p))
+    brier = float(brier_score_loss(yte, p))
+    acc = float(accuracy_score(yte, (p>=0.5).astype(int)))
 
-        # Guardar artefacto
-        out_dir = pathlib.Path(cfg.artifacts_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"{cfg.symbol}_{cfg.timeframe}_H{cfg.horizon}_logreg.pkl"
-        fpath = out_dir / fname
-        joblib.dump(final_model, fpath)
+    # Guardar artefacto
+    out_dir = pathlib.Path(cfg.artifacts_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{cfg.symbol}_{cfg.timeframe}_H{cfg.horizon}_logreg.pkl"
+    fpath = out_dir / fname
+    joblib.dump(final_model, fpath)
 
-        # Registrar versión en DB
-        agent_name = "direction_clf"
-        ver = cfg.version_tag
-        params_for_db = {
-            "symbol": cfg.symbol, "tf": cfg.timeframe, "h": cfg.horizon,
-            "model": "LogReg", "params": best_params or {}
-        }
-        metrics = {"auc": auc, "brier": brier, "acc": acc,
-                   "n_rows": int(len(df)), "tail": int(tail), "cv_best_auc": float(best_score)}
+    # Registrar versión en DB
+    agent_name = "direction_clf"
+    ver = cfg.version_tag
+    params_for_db = {
+        "symbol": cfg.symbol, "tf": cfg.timeframe, "h": cfg.horizon,
+        "model": "LogReg", "params": best_params or {}
+    }
+    metrics = {"auc": auc, "brier": brier, "acc": acc,
+               "n_rows": int(len(df)), "tail": int(tail), "cv_best_auc": float(best_score)}
 
-        train_start, train_end = t.iloc[0], t.iloc[-1]
+    train_start, train_end = t.iloc[0], t.iloc[-1]
 
-        with eng.begin() as tx:
-            agent_id = ensure_agent(tx, agent_name, "direction")
-            ver_id = register_version(
-                tx, agent_id, ver, params_for_db, str(fpath),
-                train_start, train_end, metrics,
-                promoted=(auc >= cfg.promote_if["min_auc"] and brier <= cfg.promote_if["max_brier"])
-            )
+    with eng.begin() as tx:
+        agent_id = ensure_agent(tx, agent_name, "direction")
+        ver_id = register_version(
+            tx, agent_id, ver, params_for_db, str(fpath),
+            train_start, train_end, metrics,
+            promoted=(auc >= cfg.promote_if["min_auc"] and brier <= cfg.promote_if["max_brier"])
+        )
 
-        return {"status": "ok", "symbol": cfg.symbol, "tf": cfg.timeframe,
+    return {"status": "ok", "symbol": cfg.symbol, "tf": cfg.timeframe,
                 "h": cfg.horizon, "auc": auc, "brier": brier, "acc": acc,
                 "cv_best_auc": float(best_score), "artifact": str(fpath)}
 
