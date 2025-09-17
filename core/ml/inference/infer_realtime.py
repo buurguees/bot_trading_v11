@@ -68,7 +68,18 @@ def main():
     if not path or not os.path.exists(path):
         print("No encuentro artifact. Entrena primero train_direction.py")
         return
-    model = load_pickle(path)
+    model_data = load_pickle(path)
+    
+    # Verificar si es el nuevo formato con scaler
+    if isinstance(model_data, dict) and 'model' in model_data:
+        model = model_data['model']
+        scaler = model_data['scaler']
+        feature_names = model_data['feature_names']
+    else:
+        # Formato antiguo (solo modelo)
+        model = model_data
+        scaler = None
+        feature_names = FEATURES
 
     # Dataset reciente
     df = build_dataset(SYMBOL, TF, use_snapshots=False)
@@ -77,10 +88,16 @@ def main():
         return
     # Tomemos últimas 500 filas
     df = df.dropna().tail(500)
-    X = df[FEATURES].astype(float)
+    X = df[feature_names].astype(float)
+
+    # Escalar si tenemos scaler
+    if scaler is not None:
+        X_scaled = scaler.transform(X)
+    else:
+        X_scaled = X
 
     # Inferir y upsert
-    proba = model.predict_proba(X)[:,1]
+    proba = model.predict_proba(X_scaled)[:,1]
     for ts, p in zip(df["timestamp"], proba):
         upsert_pred(ver_id, SYMBOL, TF, ts, H, {"prob_up": float(p)})
         side = prob_to_side(p)

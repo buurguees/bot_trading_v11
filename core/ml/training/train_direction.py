@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, brier_score_loss, accuracy_score
 
 from core.ml.datasets.builder import build_dataset, FEATURES
@@ -42,10 +43,21 @@ def main():
     Xtr, Xte = X.iloc[:cut], X.iloc[cut:]
     ytr, yte = y.iloc[:cut], y.iloc[cut:]
 
-    clf = LogisticRegression(max_iter=500)
-    clf.fit(Xtr, ytr)
-    proba = clf.predict_proba(Xte)[:,1]
-    pred  = (proba >= 0.52).astype(int)
+    # Escalar datos para mejor convergencia
+    scaler = StandardScaler()
+    Xtr_scaled = scaler.fit_transform(Xtr)
+    Xte_scaled = scaler.transform(Xte)
+
+    # Modelo con parámetros optimizados
+    clf = LogisticRegression(
+        max_iter=2000,  # Aumentar iteraciones para convergencia
+        solver='lbfgs',  # Explícito para claridad
+        random_state=42,  # Reproducibilidad
+        class_weight='balanced'  # Balancear clases si están desbalanceadas
+    )
+    clf.fit(Xtr_scaled, ytr)
+    proba = clf.predict_proba(Xte_scaled)[:,1]
+    pred  = (proba >= 0.5).astype(int)  # Umbral más estándar
 
     metrics = {
         "auc": float(roc_auc_score(yte, proba)),
@@ -59,7 +71,14 @@ def main():
     # Guardar artefacto + registrar versión
     os.makedirs("artifacts/direction", exist_ok=True)
     artifact_uri = f"artifacts/direction/{SYMBOL}_{TF}_H{H}_logreg.pkl"
-    save_pickle(clf, artifact_uri)
+    
+    # Guardar modelo y scaler juntos
+    model_data = {
+        'model': clf,
+        'scaler': scaler,
+        'feature_names': feat_cols
+    }
+    save_pickle(model_data, artifact_uri)
 
     agent_id = get_or_create_agent("DirectionLogReg", "direction")
     ver_id   = register_version(
