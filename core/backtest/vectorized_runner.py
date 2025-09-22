@@ -38,6 +38,10 @@ from core.config.config_loader import load_backtest_config
 load_dotenv(os.path.join("config", ".env"))
 DB_URL = os.getenv("DB_URL")
 
+# Configuración desde ENV
+BACKTEST_RANDOM_WINDOWS = os.getenv("BACKTEST_RANDOM_WINDOWS", "false").lower() in ("true", "1", "yes", "y", "on")
+BACKTEST_RANDOM_WINDOWS_COUNT = int(os.getenv("BACKTEST_RANDOM_WINDOWS_COUNT", "3"))
+
 logger = logging.getLogger("BacktestVectorized")
 logger.setLevel(logging.INFO)
 if not logger.handlers:

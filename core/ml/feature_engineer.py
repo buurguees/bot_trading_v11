@@ -48,6 +48,10 @@ MACD_SIGNAL = 9
 EMA20 = 20
 EMA50 = 50
 EMA200 = 200
+
+# Configuración desde ENV
+FEATURE_REPAIR_FULL_HISTORY = os.getenv("FEATURE_REPAIR_FULL_HISTORY", "false").lower() in ("true", "1", "yes", "y", "on")
+FEATURE_REPAIR_CHUNK_DAYS = int(os.getenv("FEATURE_REPAIR_CHUNK_DAYS", "90"))
 ST_ATR = 10
 ST_MULT = 3.0
 

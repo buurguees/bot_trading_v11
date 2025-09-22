@@ -56,11 +56,12 @@ if not logger.handlers:
 
 # Configuration from ENV
 LOOP_SLEEP = int(os.getenv("PH3_LOOP_SLEEP_SEC", "30"))
-TRAINING_EVERY = int(os.getenv("PH3_TRAINING_EVERY_SEC", "1800"))  # 30 minutes
+TRAINING_EVERY = int(os.getenv("PH3_TRAINING_EVERY_SEC", "300"))   # 5 minutos (más frecuente)
 MIN_TIMESTEPS = int(os.getenv("PH3_MIN_TIMESTEPS", "50000"))
 MAX_TIMESTEPS = int(os.getenv("PH3_MAX_TIMESTEPS", "200000"))
 EVAL_EPISODES = int(os.getenv("PH3_EVAL_EPISODES", "10"))
 PROMOTION_THRESHOLD = float(os.getenv("PH3_PROMOTION_THRESHOLD", "0.05"))
+PPO_ENABLE = os.getenv("PH3_PPO_ENABLE", "true").lower() in ("true", "1", "yes", "y", "on")
 
 def _advisory_lock(engine, key: int) -> bool:
     with engine.begin() as conn:
@@ -337,7 +338,7 @@ def main():
         try:
             now = time.monotonic()
             
-            if now - last_training >= TRAINING_EVERY:
+            if now - last_training >= TRAINING_EVERY and PPO_ENABLE:
                 logger.info("🔄 Iniciando ciclo de entrenamiento...")
                 
                 # Obtener estrategias por símbolo

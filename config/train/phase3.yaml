@@ -1,0 +1,190 @@
+# Phase 3: Configuración de Entrenamiento PPO Continuo
+# =====================================================
+
+# Configuración del ciclo de entrenamiento
+training_cycle:
+  loop_sleep_sec: 30              # Pausa entre verificaciones del ciclo
+  training_every_sec: 1800        # Entrenar cada 30 minutos
+  max_symbols_per_cycle: 10       # Límite de símbolos por ciclo (evitar sobrecarga)
+  
+# Configuración de entrenamiento PPO
+ppo_training:
+  min_timesteps: 50000           # Timesteps mínimos por estrategia
+  max_timesteps: 200000          # Timesteps máximos por estrategia
+  incremental_steps: 25000       # Incremento de timesteps para reentrenamiento
+  
+  # Configuración del modelo
+  model_params:
+    policy_type: "MlpPolicy"
+    learning_rate: 0.0003
+    n_steps: 2048
+    batch_size: 64
+    n_epochs: 10
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.01
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    target_kl: 0.01
+    verbose: 0
+
+# Configuración del environment
+environment:
+  observation_space:
+    features: ["close", "atr_14", "rsi_14", "macd", "volume"]  
+    lookback_steps: 60
+    normalization: "zscore"        # "zscore", "minmax", "none"
+  
+  reward_function:
+    type: "pnl_based"             # "pnl_based", "sharpe_based", "risk_adjusted"
+    risk_penalty: 0.1             # Penalización por riesgo excesivo
+    transaction_cost_penalty: 0.05 # Penalización por costos de transacción
+    holding_cost: 0.0001          # Costo de mantener posición por step
+  
+  market_costs:
+    taker_fee_bp: 5               # 5 basis points (0.05%)
+    maker_fee_bp: 1               # 1 basis point (0.01%)
+    slippage_bp: 3                # 3 basis points (0.03%)
+    funding_rate_daily_bp: 0      # Funding rate diario (0 para simplificar)
+
+# Configuración de evaluación
+evaluation:
+  episodes: 10                    # Número de episodios para evaluación
+  eval_data_bars: 2000           # Barras de datos para evaluación
+  test_split: 0.2                # Porcentaje de datos para testing
+  
+  # Métricas de evaluación
+  metrics:
+    primary: "mean_return"        # Métrica principal para promoción
+    secondary: ["sharpe", "max_drawdown", "win_rate"]
+  
+  # Ventana de datos para evaluación
+  evaluation_window:
+    type: "recent"                # "recent", "random", "walk_forward"
+    length_days: 30               # Días de datos para evaluación
+
+# Configuración de promoción (champion vs challenger)
+promotion:
+  threshold_type: "relative"      # "absolute" o "relative"
+  min_improvement: 0.05           # Mejora mínima requerida (5%)
+  min_episodes_for_promotion: 5   # Episodios mínimos antes de poder promover
+  stability_check: true          # Verificar estabilidad de métricas
+  
+  # Anti-overfitting: prevenir promociones basadas en ruido
+  validation:
+    require_consistent_improvement: true
+    min_validation_episodes: 20
+    confidence_interval: 0.95
+
+# Configuración de datos de entrenamiento
+data:
+  # Estrategia de datos para entrenamiento incremental
+  data_strategy: "chronological_accumulative"  # Acumula datos cronológicamente
+  min_training_bars: 1000                      # Mínimo de barras para entrenar
+  max_training_bars: 10000                     # Máximo de barras por entrenamiento
+  
+  # Ventana de datos
+  training_window:
+    type: "expanding"             # "expanding", "sliding", "fixed"
+    initial_days: 60              # Días iniciales de datos
+    expand_by_days: 30            # Días adicionales por ciclo
+  
+  # Validación de calidad de datos
+  data_quality:
+    max_missing_pct: 0.05         # Máximo 5% de datos faltantes
+    min_price_variance: 0.0001    # Varianza mínima de precios
+    outlier_threshold: 5.0        # Threshold para detección de outliers (std dev)
+
+# Configuración de archivos y logging
+artifacts:
+  models_dir: "agents"
+  backup_dir: "agents/backup"
+  naming_convention: "{symbol}_PPO_v{version}.zip"
+  keep_last_n_versions: 5        # Mantener últimas N versiones
+  
+  # Registro de experimentos
+  experiment_tracking:
+    enabled: true
+    log_dir: "experiments/phase3"
+    save_training_curves: true
+    save_evaluation_metrics: true
+
+# Configuración de recursos computacionales
+resources:
+  max_parallel_training: 2       # Máximo símbolos entrenando en paralelo
+  memory_limit_gb: 8             # Límite de memoria por proceso
+  timeout_minutes: 120           # Timeout por entrenamiento
+  
+  # GPU configuration (si disponible)
+  use_gpu: false                 # Usar GPU si está disponible
+  gpu_memory_fraction: 0.5       # Fracción de memoria GPU a usar
+
+# Configuración de monitoreo y alertas
+monitoring:
+  log_level: "INFO"              # DEBUG, INFO, WARNING, ERROR
+  log_training_progress: true    # Log progreso de entrenamiento
+  log_evaluation_results: true   # Log resultados de evaluación
+  
+  # Alertas
+  alerts:
+    enabled: false               # Habilitar alertas (Telegram, email, etc.)
+    performance_degradation: true # Alertar si performance degrada
+    training_failures: true      # Alertar si fallan entrenamientos
+    
+# Configuración específica por símbolo (opcional)
+symbol_specific:
+  BTCUSDT:
+    min_timesteps: 75000         # BTC necesita más entrenamiento
+    max_timesteps: 300000
+    risk_penalty: 0.05           # Menor penalización por riesgo
+  
+  ETHUSDT:
+    min_timesteps: 50000
+    max_timesteps: 200000
+    
+  # Símbolos más volátiles
+  DOGEUSDT:
+    risk_penalty: 0.2            # Mayor penalización por riesgo
+    slippage_bp: 5               # Mayor slippage esperado
+
+# Configuración experimental (features avanzadas)
+experimental:
+  enabled: false
+  
+  # Multi-agent learning
+  multi_agent:
+    enabled: false
+    agent_types: ["conservative", "aggressive", "balanced"]
+    
+  # Transfer learning entre símbolos
+  transfer_learning:
+    enabled: false
+    source_symbols: ["BTCUSDT", "ETHUSDT"]  # Símbolos base para transfer
+    
+  # Ensemble methods
+  ensemble:
+    enabled: false
+    n_models: 3                  # Número de modelos en ensemble
+    voting_method: "soft"        # "hard" o "soft" voting
+    
+# Configuración de debugging y desarrollo
+debug:
+  enabled: false
+  save_detailed_logs: false
+  save_episode_data: false
+  plot_training_curves: false
+  verbose_evaluation: false
+
+# Configuración de respaldo y recuperación
+backup:
+  enabled: true
+  frequency_hours: 6            # Backup cada 6 horas
+  keep_backups: 24              # Mantener backups por 24 horas
+  compress: true                # Comprimir backups
+  
+  # Recuperación automática
+  auto_recovery:
+    enabled: true
+    max_retries: 3
+    retry_delay_minutes: 5
