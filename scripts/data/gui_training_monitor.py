@@ -447,14 +447,21 @@ class EnhancedDataPoller(threading.Thread):
     def run(self):
         while self.running:
             try:
+                extra_training = {}
+                try:
+                    extra_training = self.fetch_training_data()
+                except Exception as _e:
+                    extra_training = {}
                 payload = {
                     "ts": datetime.now(tz=APP_TZ),
                     "health": self.db.pipeline_health_check(),
                     "strategies": self.db.strategy_performance_analysis(self.win),
                     "backtest_timeline": self.db.backtest_evolution_timeline(self.win),
                     "data_quality": self.db.data_quality_detailed(),
-                    "alerts": self.db.get_alerts_and_issues()
+                    "alerts": self.db.get_alerts_and_issues(),
                 }
+                if isinstance(extra_training, dict):
+                    payload.update(extra_training)
                 self.q.put(payload)
             except Exception as e:
                 self.q.put({"error": str(e), "ts": datetime.now(tz=APP_TZ)})
@@ -488,12 +495,14 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         self.tab_backtests = ttk.Frame(self.notebook)
         self.tab_data_quality = ttk.Frame(self.notebook)
         self.tab_alerts = ttk.Frame(self.notebook)
+        self.tab_training_data = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab_dashboard, text="📊 Dashboard")
         self.notebook.add(self.tab_strategies, text="🎯 Estrategias")
         self.notebook.add(self.tab_backtests, text="📈 Backtests")
         self.notebook.add(self.tab_data_quality, text="🔍 Calidad Datos")
         self.notebook.add(self.tab_alerts, text="⚠️ Alertas")
+        self.notebook.add(self.tab_training_data, text="🤖 Entrenamiento")
         
         self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -515,6 +524,141 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         self.setup_backtests_tab()
         self.setup_data_quality_tab()
         self.setup_alerts_tab()
+        self.setup_training_data_tab()
+
+    def setup_training_data_tab(self):
+        """Configura el tab de datos de entrenamiento"""
+        training_notebook = ttk.Notebook(self.tab_training_data)
+        training_notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        self.subtab_agents = ttk.Frame(training_notebook)
+        self.subtab_ppo_metrics = ttk.Frame(training_notebook)
+        self.subtab_predictions = ttk.Frame(training_notebook)
+        self.subtab_promotion_history = ttk.Frame(training_notebook)
+        training_notebook.add(self.subtab_agents, text="🤖 Agentes")
+        training_notebook.add(self.subtab_ppo_metrics, text="📊 PPO Métricas")
+        training_notebook.add(self.subtab_predictions, text="🎯 Predicciones")
+        training_notebook.add(self.subtab_promotion_history, text="🏆 Promociones")
+        self.setup_agents_subtab()
+        self.setup_ppo_metrics_subtab()
+        self.setup_predictions_subtab()
+        self.setup_promotion_history_subtab()
+
+    def setup_agents_subtab(self):
+        """Configura la sub-pestaña de agentes"""
+        controls_frame = ttk.Frame(self.subtab_agents)
+        controls_frame.pack(fill="x", padx=5, pady=5)
+        ttk.Label(controls_frame, text="Filtrar por:").pack(side="left", padx=5)
+        self.agent_status_var = tk.StringVar(value="all")
+        status_combo = ttk.Combobox(controls_frame, textvariable=self.agent_status_var,
+                                    values=["all", "candidate", "promoted", "shadow", "archived"])
+        status_combo.pack(side="left", padx=5)
+        self.agent_task_var = tk.StringVar(value="all")
+        task_combo = ttk.Combobox(controls_frame, textvariable=self.agent_task_var,
+                                  values=["all", "direction", "regime", "smc", "execution"])
+        task_combo.pack(side="left", padx=5)
+        columns = ("agent_id", "symbol", "task", "status", "version", "created_at", "promoted_at", "sharpe", "pf", "accuracy")
+        self.tree_agents = ttk.Treeview(self.subtab_agents, columns=columns, show="headings", height=15)
+        headers = ["ID", "Symbol", "Task", "Status", "Version", "Created", "Promoted", "Sharpe", "P.Factor", "Accuracy"]
+        widths = [120, 80, 80, 80, 60, 120, 120, 80, 80, 80]
+        for col, header, width in zip(columns, headers, widths):
+            self.tree_agents.heading(col, text=header)
+            self.tree_agents.column(col, width=width, anchor="center")
+        scrollbar_agents_v = ttk.Scrollbar(self.subtab_agents, orient="vertical", command=self.tree_agents.yview)
+        scrollbar_agents_h = ttk.Scrollbar(self.subtab_agents, orient="horizontal", command=self.tree_agents.xview)
+        self.tree_agents.configure(yscrollcommand=scrollbar_agents_v.set, xscrollcommand=scrollbar_agents_h.set)
+        self.tree_agents.pack(side="left", fill="both", expand=True)
+        scrollbar_agents_v.pack(side="right", fill="y")
+        scrollbar_agents_h.pack(side="bottom", fill="x")
+
+    def setup_ppo_metrics_subtab(self):
+        """Configura la sub-pestaña de métricas PPO"""
+        stats_frame = ttk.LabelFrame(self.subtab_ppo_metrics, text="📈 Estadísticas PPO", padding=10)
+        stats_frame.pack(fill="x", padx=5, pady=5)
+        self.ppo_stats_vars = {
+            "total_agents": tk.StringVar(value="0"),
+            "promoted_agents": tk.StringVar(value="0"),
+            "avg_sharpe": tk.StringVar(value="0.00"),
+            "best_performer": tk.StringVar(value="N/A"),
+            "recent_promotions": tk.StringVar(value="0")
+        }
+        stats_labels = [
+            ("Total Agentes:", "total_agents"),
+            ("Promovidos:", "promoted_agents"),
+            ("Sharpe Promedio:", "avg_sharpe"),
+            ("Mejor Performer:", "best_performer"),
+            ("Promociones (24h):", "recent_promotions")
+        ]
+        for i, (label, var_key) in enumerate(stats_labels):
+            row = i // 3
+            col = i % 3
+            frame = ttk.Frame(stats_frame)
+            frame.grid(row=row, column=col, sticky="ew", padx=10, pady=5)
+            stats_frame.columnconfigure(col, weight=1)
+            ttk.Label(frame, text=label, font=("Arial", 9, "bold")).pack(anchor="w")
+            ttk.Label(frame, textvariable=self.ppo_stats_vars[var_key], font=("Arial", 11)).pack(anchor="w")
+        metrics_frame = ttk.LabelFrame(self.subtab_ppo_metrics, text="📊 Evolución Métricas", padding=5)
+        metrics_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        self.fig_ppo = Figure(figsize=(12, 8), dpi=100)
+        self.ax_ppo_sharpe = self.fig_ppo.add_subplot(221)
+        self.ax_ppo_pf = self.fig_ppo.add_subplot(222)
+        self.ax_ppo_accuracy = self.fig_ppo.add_subplot(223)
+        self.ax_ppo_promotions = self.fig_ppo.add_subplot(224)
+        self.canvas_ppo = FigureCanvasTkAgg(self.fig_ppo, master=metrics_frame)
+        self.canvas_ppo.get_tk_widget().pack(fill="both", expand=True)
+
+    def setup_predictions_subtab(self):
+        """Configura la sub-pestaña de predicciones"""
+        pred_stats_frame = ttk.LabelFrame(self.subtab_predictions, text="🎯 Estadísticas de Predicciones (24h)", padding=10)
+        pred_stats_frame.pack(fill="x", padx=5, pady=5)
+        self.pred_stats_vars = {
+            "total_predictions": tk.StringVar(value="0"),
+            "avg_confidence": tk.StringVar(value="0.00"),
+            "high_conf_pct": tk.StringVar(value="0.0%"),
+            "direction_preds": tk.StringVar(value="0"),
+            "regime_preds": tk.StringVar(value="0"),
+            "smc_preds": tk.StringVar(value="0")
+        }
+        pred_labels = [
+            ("Total Predicciones:", "total_predictions"),
+            ("Confianza Promedio:", "avg_confidence"),
+            ("Alta Confianza (>70%):", "high_conf_pct"),
+            ("Direction:", "direction_preds"),
+            ("Regime:", "regime_preds"),
+            ("SMC:", "smc_preds")
+        ]
+        for i, (label, var_key) in enumerate(pred_labels):
+            row = i // 3
+            col = i % 3
+            frame = ttk.Frame(pred_stats_frame)
+            frame.grid(row=row, column=col, sticky="ew", padx=10, pady=5)
+            pred_stats_frame.columnconfigure(col, weight=1)
+            ttk.Label(frame, text=label, font=("Arial", 9, "bold")).pack(anchor="w")
+            ttk.Label(frame, textvariable=self.pred_stats_vars[var_key], font=("Arial", 11)).pack(anchor="w")
+        pred_charts_frame = ttk.LabelFrame(self.subtab_predictions, text="📈 Análisis de Predicciones", padding=5)
+        pred_charts_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        self.fig_predictions = Figure(figsize=(12, 6), dpi=100)
+        self.ax_pred_conf = self.fig_predictions.add_subplot(121)
+        self.ax_pred_hourly = self.fig_predictions.add_subplot(122)
+        self.canvas_predictions = FigureCanvasTkAgg(self.fig_predictions, master=pred_charts_frame)
+        self.canvas_predictions.get_tk_widget().pack(fill="both", expand=True)
+
+    def setup_promotion_history_subtab(self):
+        """Configura la sub-pestaña del historial de promociones"""
+        timeline_frame = ttk.LabelFrame(self.subtab_promotion_history, text="🏆 Historial de Promociones", padding=5)
+        timeline_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        promo_columns = ("promoted_at", "symbol", "task", "agent_id", "prev_sharpe", "new_sharpe", "improvement", "reason")
+        self.tree_promotions = ttk.Treeview(timeline_frame, columns=promo_columns, show="headings", height=15)
+        promo_headers = ["Fecha", "Symbol", "Task", "Agent ID", "Sharpe Anterior", "Nuevo Sharpe", "Mejora %", "Razón"]
+        promo_widths = [130, 80, 80, 120, 100, 100, 80, 150]
+        for col, header, width in zip(promo_columns, promo_headers, promo_widths):
+            self.tree_promotions.heading(col, text=header)
+            self.tree_promotions.column(col, width=width, anchor="center")
+        scrollbar_promo_v = ttk.Scrollbar(timeline_frame, orient="vertical", command=self.tree_promotions.yview)
+        scrollbar_promo_h = ttk.Scrollbar(timeline_frame, orient="horizontal", command=self.tree_promotions.xview)
+        self.tree_promotions.configure(yscrollcommand=scrollbar_promo_v.set, xscrollcommand=scrollbar_promo_h.set)
+        self.tree_promotions.pack(side="left", fill="both", expand=True)
+        scrollbar_promo_v.pack(side="right", fill="y")
+        scrollbar_promo_h.pack(side="bottom", fill="x")
 
     def setup_dashboard_tab(self):
         """Configura el tab de dashboard"""
@@ -780,6 +924,209 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
                 self.ax_bt_distribution.grid(True, alpha=0.3)
         
         self.canvas_backtests.draw_idle()
+
+    # =================== NUEVOS MÉTODOS DE ACTUALIZACIÓN (TRAINING TAB) ===================
+    def update_training_data(self, payload):
+        """Actualiza todos los datos de entrenamiento"""
+        try:
+            self.update_agents_data(payload)
+            self.update_ppo_metrics_data(payload)
+            self.update_predictions_data(payload)
+            self.update_promotion_history_data(payload)
+        except Exception as e:
+            logger.error(f"Error actualizando datos de entrenamiento: {e}")
+
+    def update_agents_data(self, payload):
+        """Actualiza la tabla de agentes"""
+        if "agents" not in payload:
+            return
+        for item in self.tree_agents.get_children():
+            self.tree_agents.delete(item)
+        agents_df = payload["agents"]
+        if agents_df.empty:
+            return
+        filtered_df = agents_df.copy()
+        if self.agent_status_var.get() != "all":
+            filtered_df = filtered_df[filtered_df['status'] == self.agent_status_var.get()]
+        if self.agent_task_var.get() != "all":
+            filtered_df = filtered_df[filtered_df['task'] == self.agent_task_var.get()]
+        for _, row in filtered_df.iterrows():
+            metrics = row.get('metrics', {}) or {}
+            if isinstance(metrics, str):
+                try:
+                    import json as _json
+                    metrics = _json.loads(metrics)
+                except Exception:
+                    metrics = {}
+            values = (
+                str(row.get('agent_id', ''))[:12] + "...",
+                row.get('symbol', ''),
+                row.get('task', ''),
+                row.get('status', ''),
+                row.get('version', ''),
+                str(row.get('created_at', ''))[:16] if row.get('created_at') else '',
+                str(row.get('promoted_at', ''))[:16] if row.get('promoted_at') else 'N/A',
+                f"{metrics.get('sharpe_ratio', 0.0):.2f}",
+                f"{metrics.get('profit_factor', 0.0):.2f}",
+                f"{metrics.get('accuracy', 0.0):.3f}"
+            )
+            tag = ""
+            if row.get('status') == 'promoted':
+                tag = "promoted"
+            elif row.get('status') == 'candidate':
+                tag = "candidate"
+            self.tree_agents.insert("", "end", values=values, tags=(tag,))
+        self.tree_agents.tag_configure("promoted", background="#d4edda")
+        self.tree_agents.tag_configure("candidate", background="#fff3cd")
+
+    def update_ppo_metrics_data(self, payload):
+        if "agents" not in payload:
+            return
+        agents_df = payload["agents"]
+        total_agents = len(agents_df)
+        promoted_agents = len(agents_df[agents_df['status'] == 'promoted'])
+        metrics_list = []
+        for _, row in agents_df.iterrows():
+            m = row.get('metrics', {}) or {}
+            if isinstance(m, str):
+                try:
+                    import json as _json
+                    m = _json.loads(m)
+                except Exception:
+                    m = {}
+            metrics_list.append(m)
+        sharpe_values = [m.get('sharpe_ratio', 0) for m in metrics_list if m.get('sharpe_ratio') is not None]
+        avg_sharpe = float(np.mean(sharpe_values)) if sharpe_values else 0.0
+        best_performer = "N/A"
+        if sharpe_values:
+            best_idx = int(np.argmax(sharpe_values))
+            if best_idx < len(agents_df):
+                best_row = agents_df.iloc[best_idx]
+                best_performer = f"{best_row.get('symbol', 'N/A')} ({sharpe_values[best_idx]:.2f})"
+        recent_promotions = 0
+        if 'promoted_at' in agents_df.columns:
+            now = pd.Timestamp.now(tz=APP_TZ)
+            recent_promo_df = agents_df.dropna(subset=['promoted_at']).copy()
+            if not recent_promo_df.empty:
+                recent_promo_df['promoted_at'] = pd.to_datetime(recent_promo_df['promoted_at'])
+                recent_promotions = int(len(recent_promo_df[recent_promo_df['promoted_at'] >= now - timedelta(hours=24)]))
+        self.ppo_stats_vars["total_agents"].set(str(total_agents))
+        self.ppo_stats_vars["promoted_agents"].set(str(promoted_agents))
+        self.ppo_stats_vars["avg_sharpe"].set(f"{avg_sharpe:.3f}")
+        self.ppo_stats_vars["best_performer"].set(best_performer)
+        self.ppo_stats_vars["recent_promotions"].set(str(recent_promotions))
+        self.update_ppo_charts(agents_df, metrics_list)
+
+    def update_ppo_charts(self, agents_df, metrics_list):
+        try:
+            self.ax_ppo_sharpe.clear()
+            self.ax_ppo_pf.clear()
+            self.ax_ppo_accuracy.clear()
+            self.ax_ppo_promotions.clear()
+            sharpe_values = [m.get('sharpe_ratio', 0) for m in metrics_list]
+            pf_values = [m.get('profit_factor', 0) for m in metrics_list]
+            accuracy_values = [m.get('accuracy', 0) for m in metrics_list]
+            if sharpe_values:
+                self.ax_ppo_sharpe.hist(sharpe_values, bins=15, alpha=0.7, color='blue', edgecolor='black')
+                self.ax_ppo_sharpe.set_title('Distribución Sharpe Ratio')
+                self.ax_ppo_sharpe.set_xlabel('Sharpe Ratio')
+                self.ax_ppo_sharpe.set_ylabel('Frecuencia')
+                self.ax_ppo_sharpe.axvline(np.mean(sharpe_values), color='red', linestyle='--', label=f'Promedio: {np.mean(sharpe_values):.2f}')
+                self.ax_ppo_sharpe.legend()
+            if pf_values:
+                self.ax_ppo_pf.hist(pf_values, bins=15, alpha=0.7, color='green', edgecolor='black')
+                self.ax_ppo_pf.set_title('Distribución Profit Factor')
+                self.ax_ppo_pf.set_xlabel('Profit Factor')
+                self.ax_ppo_pf.set_ylabel('Frecuencia')
+                self.ax_ppo_pf.axvline(np.mean(pf_values), color='red', linestyle='--', label=f'Promedio: {np.mean(pf_values):.2f}')
+                self.ax_ppo_pf.legend()
+            if accuracy_values:
+                self.ax_ppo_accuracy.hist(accuracy_values, bins=15, alpha=0.7, color='orange', edgecolor='black')
+                self.ax_ppo_accuracy.set_title('Distribución Accuracy')
+                self.ax_ppo_accuracy.set_xlabel('Accuracy')
+                self.ax_ppo_accuracy.set_ylabel('Frecuencia')
+                self.ax_ppo_accuracy.axvline(np.mean(accuracy_values), color='red', linestyle='--', label=f'Promedio: {np.mean(accuracy_values):.3f}')
+                self.ax_ppo_accuracy.legend()
+            status_counts = agents_df['status'].value_counts()
+            if not status_counts.empty:
+                colors = {'promoted': 'gold', 'candidate': 'lightblue', 'shadow': 'lightgray', 'archived': 'lightcoral'}
+                bar_colors = [colors.get(status, 'gray') for status in status_counts.index]
+                self.ax_ppo_promotions.bar(status_counts.index, status_counts.values, color=bar_colors)
+                self.ax_ppo_promotions.set_title('Agentes por Estado')
+                self.ax_ppo_promotions.set_xlabel('Estado')
+                self.ax_ppo_promotions.set_ylabel('Cantidad')
+                for i, v in enumerate(status_counts.values):
+                    self.ax_ppo_promotions.text(i, v + 0.1, str(v), ha='center', va='bottom')
+            self.fig_ppo.tight_layout()
+            self.canvas_ppo.draw()
+        except Exception as e:
+            logger.error(f"Error actualizando gráficos PPO: {e}")
+
+    def update_predictions_data(self, payload):
+        if "predictions" not in payload:
+            return
+        predictions_df = payload["predictions"]
+        total_preds = len(predictions_df)
+        avg_conf = predictions_df['pred_conf'].mean() if 'pred_conf' in predictions_df.columns else 0.0
+        high_conf_count = len(predictions_df[predictions_df['pred_conf'] > 0.7]) if 'pred_conf' in predictions_df.columns else 0
+        high_conf_pct = (high_conf_count / total_preds * 100) if total_preds > 0 else 0.0
+        task_counts = predictions_df['task'].value_counts() if 'task' in predictions_df.columns else pd.Series()
+        self.pred_stats_vars["total_predictions"].set(str(total_preds))
+        self.pred_stats_vars["avg_confidence"].set(f"{avg_conf:.3f}")
+        self.pred_stats_vars["high_conf_pct"].set(f"{high_conf_pct:.1f}%")
+        self.pred_stats_vars["direction_preds"].set(str(task_counts.get('direction', 0)))
+        self.pred_stats_vars["regime_preds"].set(str(task_counts.get('regime', 0)))
+        self.pred_stats_vars["smc_preds"].set(str(task_counts.get('smc', 0)))
+        self.update_predictions_charts(predictions_df)
+
+    def update_predictions_charts(self, predictions_df):
+        try:
+            self.ax_pred_conf.clear()
+            self.ax_pred_hourly.clear()
+            if predictions_df.empty:
+                return
+            if 'pred_conf' in predictions_df.columns:
+                self.ax_pred_conf.hist(predictions_df['pred_conf'], bins=20, alpha=0.7, color='purple', edgecolor='black')
+                self.ax_pred_conf.set_title('Distribución Confianza Predicciones')
+                self.ax_pred_conf.set_xlabel('Confianza')
+                self.ax_pred_conf.set_ylabel('Frecuencia')
+                self.ax_pred_conf.axvline(0.7, color='red', linestyle='--', label='Umbral Alto (0.7)')
+                self.ax_pred_conf.axvline(predictions_df['pred_conf'].mean(), color='green', linestyle='--', label=f'Media: {predictions_df["pred_conf"].mean():.2f}')
+                self.ax_pred_conf.legend()
+            if 'created_at' in predictions_df.columns:
+                predictions_df['hour'] = pd.to_datetime(predictions_df['created_at']).dt.floor('H')
+                hourly_counts = predictions_df.groupby('hour').size()
+                if not hourly_counts.empty:
+                    self.ax_pred_hourly.plot(hourly_counts.index, hourly_counts.values, marker='o', linewidth=2, markersize=4)
+                    self.ax_pred_hourly.set_title('Predicciones por Hora')
+                    self.ax_pred_hourly.set_xlabel('Hora')
+                    self.ax_pred_hourly.set_ylabel('Cantidad')
+                    self.ax_pred_hourly.tick_params(axis='x', rotation=45)
+            self.fig_predictions.tight_layout()
+            self.canvas_predictions.draw()
+        except Exception as e:
+            logger.error(f"Error actualizando gráficos de predicciones: {e}")
+
+    def update_promotion_history_data(self, payload):
+        if "promotion_history" not in payload:
+            return
+        for item in self.tree_promotions.get_children():
+            self.tree_promotions.delete(item)
+        promo_df = payload["promotion_history"]
+        if promo_df.empty:
+            return
+        for _, row in promo_df.iterrows():
+            values = (
+                str(row.get('promoted_at', ''))[:16] if row.get('promoted_at') else 'N/A',
+                row.get('symbol', ''),
+                row.get('task', ''),
+                str(row.get('agent_id', ''))[:12] + "..." if row.get('agent_id') else '',
+                f"{row.get('prev_sharpe', 0.0):.3f}",
+                f"{row.get('new_sharpe', 0.0):.3f}",
+                f"{row.get('improvement_pct', 0.0):.1f}%",
+                row.get('reason', 'Performance improvement')
+            )
+            self.tree_promotions.insert("", "end", values=values)
 
     def update_data_quality(self, data: Dict):
         """Actualiza la tabla de calidad de datos"""
