@@ -26,6 +26,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
 from core.config.config_loader import load_backtest_config, load_training_config
+from core.training.ppo_trainer import train_ppo_for_strategy
 
 load_dotenv(os.path.join("config", ".env"))
 DB_URL = os.getenv("DB_URL")
@@ -64,10 +65,28 @@ def register_from_strategy(strategy_id: str) -> str:
         sym = r["symbol"]; ms = r["metrics_summary"]
         ms = json.loads(ms) if isinstance(ms, str) else (ms or {})
 
+        # decidir si entrenar realmente PPO
+        cfg = load_training_config()
+        enable_rl = bool(cfg.get("ppo_execution", {}).get("enable", False))
         artifact_uri = os.path.join(AGENTS_DIR, f"{sym}_PPO.zip")
-        # placeholder: crear/actualizar archivo (vacío o con un marker)
-        with open(artifact_uri, "wb") as f:
-            f.write(b"placeholder-ppo-artifact")
+        os.makedirs(AGENTS_DIR, exist_ok=True)
+        if enable_rl:
+            try:
+                res = train_ppo_for_strategy(strategy_id=strategy_id, total_timesteps=int(cfg.get("ppo_execution", {}).get("training", {}).get("total_timesteps", 100000)))
+                if res.get("trained") and res.get("artifact_uri"):
+                    artifact_uri = res["artifact_uri"]
+                else:
+                    # fallback placeholder
+                    with open(artifact_uri, "wb") as f:
+                        f.write(b"placeholder-ppo-artifact")
+            except Exception as e:
+                logger.warning(f"Fallo entrenando PPO real: {e}. Usando placeholder.")
+                with open(artifact_uri, "wb") as f:
+                    f.write(b"placeholder-ppo-artifact")
+        else:
+            # placeholder si el flag está deshabilitado
+            with open(artifact_uri, "wb") as f:
+                f.write(b"placeholder-ppo-artifact")
 
         agent_id = str(uuid.uuid4())
         conn.execute(text("""
