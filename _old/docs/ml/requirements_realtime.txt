@@ -1,0 +1,9 @@
+# Dependencias para inferencia en tiempo real
+asyncio
+psutil>=5.9.0
+aiofiles>=23.0.0
+aiohttp>=3.8.0
+pandas>=1.5.0
+numpy>=1.24.0
+sqlalchemy>=2.0.0
+python-dotenv>=1.0.0

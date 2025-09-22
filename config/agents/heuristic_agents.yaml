@@ -1,0 +1,95 @@
+# Configuración de agentes heurísticos
+# Estos agentes generan predicciones usando reglas simples basadas en indicadores técnicos
+
+direction:
+  # Reglas para agent_direction
+  rules:
+    long_signals:
+      - indicator: "ema_21"
+        condition: ">"
+        threshold: "ema_50"
+        weight: 1
+      - indicator: "rsi_14"
+        condition: ">"
+        threshold: 55
+        weight: 1
+      - indicator: "macd_hist"
+        condition: ">"
+        threshold: 0
+        weight: 1
+    short_signals:
+      - indicator: "ema_21"
+        condition: "<"
+        threshold: "ema_50"
+        weight: 1
+      - indicator: "rsi_14"
+        condition: "<"
+        threshold: 45
+        weight: 1
+      - indicator: "macd_hist"
+        condition: "<"
+        threshold: 0
+        weight: 1
+  thresholds:
+    min_signals_long: 2      # Mínimo de señales para LONG
+    min_signals_short: 2     # Mínimo de señales para SHORT
+    flat_confidence: 0.50    # Confianza por defecto para FLAT
+
+regime:
+  # Reglas para agent_regime
+  rules:
+    trend_signals:
+      - indicator: "ema_slope"
+        condition: ">"
+        threshold: 0.004
+        weight: 1
+      - indicator: "supertrend_dir"
+        condition: "!="
+        threshold: 0
+        weight: 1
+  thresholds:
+    trend_confidence_base: 0.6
+    trend_confidence_max: 0.95
+    slope_multiplier: 50.0
+
+smc:
+  # Reglas para agent_smc
+  rules:
+    bull_signals:
+      - indicator: "supertrend_dir"
+        condition: ">"
+        threshold: 0
+        weight: 1
+      - indicator: "close_vs_ema50"
+        condition: ">"
+        threshold: 0
+        weight: 1
+      - indicator: "rsi_14"
+        condition: ">"
+        threshold: 50
+        weight: 1
+      - indicator: "smc_bull"
+        condition: "=="
+        threshold: 1
+        weight: 1
+    bear_signals:
+      - indicator: "supertrend_dir"
+        condition: "<"
+        threshold: 0
+        weight: 1
+      - indicator: "close_vs_ema50"
+        condition: "<"
+        threshold: 0
+        weight: 1
+      - indicator: "rsi_14"
+        condition: "<"
+        threshold: 50
+        weight: 1
+      - indicator: "smc_bear"
+        condition: "=="
+        threshold: 1
+        weight: 1
+  thresholds:
+    bull_confidence: 0.7
+    bear_confidence: 0.7
+    neutral_confidence: 0.55

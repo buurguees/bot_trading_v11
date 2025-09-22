@@ -1,0 +1,107 @@
+# ============================================================================
+# CONFIGURACIÓN DE MANTENIMIENTO DE BASE DE DATOS
+# ============================================================================
+
+# Configuración de conexión a la base de datos
+database:
+  host: "192.168.10.109"
+  port: 5432
+  database: "trading_db"
+  user: "trading_user"
+  password: "160501"
+
+# Configuración de índices BRIN
+brin_indexes:
+  # Tablas para crear índices BRIN (en orden de prioridad)
+  tables:
+    - name: "historicaldata"
+      columns: ["timestamp", "symbol", "timestamp"]
+      description: "Tabla más grande con datos OHLCV"
+    - name: "features"
+      columns: ["timestamp", "symbol", "timestamp"]
+      description: "Tabla grande con indicadores técnicos"
+    - name: "agentpreds"
+      columns: ["timestamp", "symbol", "timestamp"]
+      description: "Tabla grande con predicciones ML"
+    - name: "agentsignals"
+      columns: ["timestamp", "symbol", "timestamp"]
+      description: "Tabla grande con señales de trading"
+    - name: "tradeplans"
+      columns: ["bar_ts", "symbol", "bar_ts"]
+      description: "Tabla grande con planes de trading"
+    - name: "backtests"
+      columns: ["created_at"]
+      description: "Tabla con resultados de backtests"
+    - name: "backtesttrades"
+      columns: ["entry_ts", "symbol", "entry_ts"]
+      description: "Tabla grande con trades de backtest"
+
+# Configuración de VACUUM
+vacuum:
+  # Tablas para VACUUM ANALYZE (en orden de tamaño)
+  tables:
+    - "historicaldata"
+    - "features"
+    - "agentpreds"
+    - "agentsignals"
+    - "tradeplans"
+    - "backtesttrades"
+    - "backtests"
+    - "agentversions"
+    - "strategy_memory"
+    - "strategy_samples"
+  
+  # Opciones de VACUUM
+  options:
+    analyze: true
+    verbose: true
+    full: false  # Solo si es necesario (muy lento)
+
+# Configuración de índices adicionales
+additional_indexes:
+  # Índices compuestos para consultas frecuentes
+  composite_indexes:
+    - table: "historicaldata"
+      columns: ["symbol", "timeframe", "timestamp"]
+    - table: "features"
+      columns: ["symbol", "timeframe", "timestamp"]
+    - table: "agentpreds"
+      columns: ["symbol", "timeframe", "timestamp"]
+    - table: "agentsignals"
+      columns: ["symbol", "timeframe", "timestamp"]
+    - table: "backtests"
+      columns: ["symbol", "timeframe", "created_at"]
+    - table: "backtesttrades"
+      columns: ["symbol", "timeframe", "entry_ts"]
+
+# Configuración de limpieza de datos
+cleanup:
+  # Verificar datos antiguos (no eliminar por defecto)
+  check_old_data: true
+  
+  # Umbrales para considerar datos antiguos (en días)
+  thresholds:
+    historical_data: 365  # Mantener al menos 1 año
+    features: 365
+    predictions: 90       # Mantener predicciones por 3 meses
+    signals: 90
+    plans: 30             # Mantener planes por 1 mes
+    backtests: 180        # Mantener backtests por 6 meses
+
+# Configuración de logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  directory: "logs"
+  max_files: 10  # Mantener solo los últimos 10 logs
+
+# Configuración de rendimiento
+performance:
+  # Tiempo máximo de ejecución (en minutos)
+  max_execution_time: 60
+  
+  # Verificar estadísticas después del mantenimiento
+  check_stats: true
+  
+  # Mostrar resumen de tamaños de tablas
+  show_table_sizes: true

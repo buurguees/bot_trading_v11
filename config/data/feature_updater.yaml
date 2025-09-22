@@ -1,0 +1,20 @@
+# Configuración del feature updater
+feature_updater:
+  # Configuración del shim
+  shim:
+    enabled: true
+    poll_interval_sec: 5
+    fallback_to_engineer: true
+  
+  # Configuración del feature_engineer
+  engineer:
+    realtime_mode: true
+    batch_size: 100
+    max_retries: 3
+    retry_delay_sec: 1
+  
+  # Configuración de logging
+  logging:
+    level: "INFO"
+    log_features_calculated: true
+    log_performance_metrics: true

@@ -1,0 +1,24 @@
+﻿# Parámetros de backtest por motor
+vectorized:
+  fees_bps: 2.5
+  slippage_bps: 1.0
+  funding_apr: 0.05
+  warmup_bars: 300
+  max_bars: 100000
+
+event_driven:
+  fees_bps: 3.0
+  slippage_bps: 2.0
+  latency_ms: 120
+  allow_partial_fills: true
+  warmup_bars: 300
+
+walk_forward:
+  windows:
+    - { train_days: 60, test_days: 15 }
+    - { train_days: 90, test_days: 30 }
+
+risk_overlay:
+  max_exposure_usdt: 50000
+  max_symbols: 6
+  netting: true

@@ -1,268 +1,169 @@
 """
 core/data/realtime_updater.py
+python -m core.data.realtime_updater
+----------------------------------
+Actualizador en "casi" tiempo real:
+- Rellena gaps desde el último ts en BD hasta NOW.
+- Luego hace polling periódico para traer nuevas velas.
+- Misma lógica de inserción que historical_downloader (idempotente).
 
-Modo 'daemon' simple: actualiza velas de Futuros para todos los símbolos/TFs
-desde el último timestamp en DB hasta 'ahora', y se queda en bucle
-esperando al siguiente cierre de vela del timeframe más corto.
+Este módulo está pensado para ejecutarse como servicio (systemd/pm2) o en un screen/tmux.
 
-Ctrl+C para detener.
+Requisitos:
+- pip install ccxt pyyaml python-dotenv sqlalchemy psycopg2-binary
 """
 
-import asyncio
+from __future__ import annotations
+
 import os
+import time
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
+import ccxt
 import yaml
 from dotenv import load_dotenv
-import ccxt.async_support as ccxt
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
-import math
-import random
 
-# --------------------------
-# Configuración básica
-# --------------------------
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("realtime_updater")
+from core.data.database import MarketDB, TF_MS
 
-load_dotenv(dotenv_path="config/.env")
-DB_URL = os.getenv("DB_URL")
+load_dotenv(os.path.join("config", ".env"))
 
-BITGET_API_KEY = os.getenv("BITGET_API_KEY")
-BITGET_SECRET_KEY = os.getenv("BITGET_SECRET")
-BITGET_PASSPHRASE = os.getenv("BITGET_PASSPHRASE")
+logger = logging.getLogger("RealtimeUpdater")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s"))
+    logger.addHandler(_h)
 
-CONFIG_PATH = "config/trading/symbols.yaml"
-ENGINE = create_engine(DB_URL, pool_pre_ping=True)
+CONFIG_PATH = os.path.join("config", "market", "symbols.yaml")
+CCXT_LIMIT = 1000
 
-# Límite CCXT y concurrencia
-REQUEST_LIMIT = int(os.getenv("REQUEST_LIMIT", "1000"))
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "6"))
 
-# Si no hay datos previos, cuánto retroceder (minutos)
-FALLBACK_LOOKBACK_MIN = int(os.getenv("FALLBACK_LOOKBACK_MIN", "1440"))  # 1 día
+def load_symbols_config(path: str) -> Dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
-# Espera extra tras el cierre de vela para evitar velas en formación (ms)
-POLL_GRACE_MS = int(os.getenv("POLL_GRACE_MS", "5000"))
 
-# Jitter aleatorio para evitar sincronización perfecta (ms)
-JITTER_MAX_MS = int(os.getenv("JITTER_MAX_MS", "1500"))
+def make_exchange() -> ccxt.bitget:
+    api_key = os.getenv("BITGET_API_KEY") or ""
+    secret = os.getenv("BITGET_API_SECRET") or ""
+    password = os.getenv("BITGET_API_PASSPHRASE") or os.getenv("BITGET_API_PASSWORD") or ""
 
-# --------------------------
-# Utilidades tiempo/TF
-# --------------------------
-def timeframe_to_ms(tf: str) -> int:
-    mapping = {
-        "1m": 60_000,
-        "5m": 300_000,
-        "15m": 900_000,
-        "1h": 3_600_000,
-        "4h": 14_400_000,
-        "1d": 86_400_000,
-    }
-    if tf not in mapping:
-        raise ValueError(f"Timeframe no soportado: {tf}")
-    return mapping[tf]
+    ex = ccxt.bitget({
+        "enableRateLimit": True,
+        "options": {"defaultType": "swap"},
+        "apiKey": api_key,
+        "secret": secret,
+        "password": password,
+    })
+    return ex
 
-def now_ms() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1000)
 
-def next_bar_sleep_seconds(min_tf_ms: int, grace_ms: int = POLL_GRACE_MS) -> float:
-    """Calcula segundos hasta el próximo cierre del TF más corto, + gracia + jitter."""
-    t = now_ms()
-    next_bar = ((t // min_tf_ms) + 1) * min_tf_ms
-    wait_ms = max(0, (next_bar + grace_ms) - t)
-    # pequeño jitter para repartir carga
-    wait_ms += random.randint(0, JITTER_MAX_MS)
-    return wait_ms / 1000.0
+def backfill_from_last(
+    ex: ccxt.Exchange,
+    db: MarketDB,
+    ccxt_symbol: str,
+    db_symbol: str,
+    timeframe: str,
+    overlap_bars: int = 2,
+) -> int:
+    """
+    Desde el último ts, baja hasta ahora (incluye solapamiento de N velas para asegurar continuidad).
+    Solo procesa velas CERRADAS para evitar usar velas en curso.
+    """
+    tf_ms = TF_MS[timeframe]
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
 
-# --------------------------
-# Utilidades DB
-# --------------------------
-def get_last_ts_ms(symbol: str, timeframe: str) -> Optional[int]:
-    q = text("""
-        SELECT EXTRACT(EPOCH FROM MAX(timestamp)) * 1000 AS ts_ms
-        FROM trading.historicaldata
-        WHERE symbol=:symbol AND timeframe=:tf
-    """)
-    with ENGINE.begin() as conn:
-        row = conn.execute(q, {"symbol": symbol, "tf": timeframe}).scalar()
-        return int(row) if row else None
-
-def save_batch_to_db(rows: List[Tuple[int, float, float, float, float, float]],
-                     symbol: str, timeframe: str) -> int:
-    if not rows:
+    last_dt = db.get_max_ts(db_symbol, timeframe)
+    if last_dt is None:
+        logger.info(f"[{db_symbol}][{timeframe}] sin histórico; salta backfill.")
         return 0
-    insert_q = text("""
-        INSERT INTO trading.historicaldata (symbol, timeframe, timestamp, open, high, low, close, volume)
-        VALUES (:symbol, :tf, to_timestamp(:tsms / 1000.0), :o, :h, :l, :c, :v)
-        ON CONFLICT ON CONSTRAINT unique_ohlcv DO NOTHING
-    """)
-    inserted = 0
-    try:
-        with ENGINE.begin() as conn:
-            for tsms, o, h, l, c, v in rows:
-                conn.execute(insert_q, {
-                    "symbol": symbol, "tf": timeframe, "tsms": tsms,
-                    "o": float(o), "h": float(h), "l": float(l), "c": float(c), "v": float(v)
-                })
-                inserted += 1
-        return inserted
-    except SQLAlchemyError as e:
-        logger.error(f"[DB] Error guardando {symbol} {timeframe}: {e}")
-        return inserted
 
-# --------------------------
-# Exchange (reutilizado en bucle)
-# --------------------------
-exchange = ccxt.bitget({
-    "apiKey": BITGET_API_KEY,
-    "secret": BITGET_SECRET_KEY,
-    "password": BITGET_PASSPHRASE,
-    "enableRateLimit": True,
-})
+    # Calcular cuántas velas deberían haber desde la última hasta ahora
+    last_ms = int(last_dt.timestamp() * 1000)
+    expected_velas = (now_ms - last_ms) // tf_ms
+    
+    # Si no hay velas nuevas esperadas, no hacer nada
+    if expected_velas <= 0:
+        logger.info(f"[{db_symbol}][{timeframe}] no hay velas nuevas esperadas (última: {last_dt})")
+        return 0
 
-async def fetch_ohlcv(symbol: str, timeframe: str, since_ms_: int, limit: int = REQUEST_LIMIT) -> Optional[List[List]]:
-    try:
-        data = await exchange.fetch_ohlcv(symbol, timeframe, since_ms_, limit)
-        return data or None
-    except ccxt.RateLimitExceeded as e:
-        logger.warning(f"[{symbol} {timeframe}] Rate limit: {e}. Esperando 60s…")
-        await asyncio.sleep(60)
-        return await fetch_ohlcv(symbol, timeframe, since_ms_, limit)
-    except ccxt.NetworkError as e:
-        logger.warning(f"[{symbol} {timeframe}] Network error: {e}. Reintentando en 10s…")
-        await asyncio.sleep(10)
-        return await fetch_ohlcv(symbol, timeframe, since_ms_, limit)
-    except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] Error inesperado: {e}")
-        return None
+    since_ms = last_ms - overlap_bars * tf_ms
+    since_ms = max(since_ms, 0)
 
-def filter_closed_candles(rows: List[List], timeframe: str) -> List[List]:
-    if not rows:
-        return rows
-    cutoff = now_ms() - timeframe_to_ms(timeframe)
-    return [c for c in rows if c[0] <= cutoff]
+    total = 0
+    cursor = since_ms
 
-# --------------------------
-# Catch-up por símbolo/TF
-# --------------------------
-async def catch_up_symbol_tf(symbol: str, timeframe: str,
-                             fallback_minutes: int = FALLBACK_LOOKBACK_MIN) -> int:
-    current_ms = now_ms()
-    last_ts = get_last_ts_ms(symbol, timeframe)
-    if last_ts:
-        since_ms_ = last_ts + 1
-        logger.info(f"[{symbol} {timeframe}] Reanudando desde {last_ts} (ms).")
-    else:
-        since_ms_ = current_ms - fallback_minutes * 60_000
-        logger.info(f"[{symbol} {timeframe}] Sin datos previos. Retrocediendo {fallback_minutes} min.")
-
-    total_saved = 0
-    step_guard = timeframe_to_ms(timeframe)
-
-    while since_ms_ < current_ms:
-        batch = await fetch_ohlcv(symbol, timeframe, since_ms_, REQUEST_LIMIT)
-        if not batch:
-            # evita loop infinito
-            since_ms_ += step_guard
-            await asyncio.sleep(0.5)
+    while cursor < now_ms:
+        try:
+            batch = ex.fetch_ohlcv(
+                symbol=ccxt_symbol,
+                timeframe=timeframe,
+                since=cursor,
+                limit=CCXT_LIMIT,
+            )
+        except ccxt.NetworkError as e:
+            logger.warning(f"Red: reintentando en 5s… ({e})")
+            time.sleep(5)
             continue
+        except ccxt.BaseError as e:
+            logger.error(f"CCXT error: {e}")
+            break
 
-        batch = filter_closed_candles(batch, timeframe)
         if not batch:
             break
 
-        saved = save_batch_to_db(
-            [(c[0], c[1], c[2], c[3], c[4], c[5]) for c in batch],
-            symbol, timeframe
-        )
-        total_saved += saved
-        since_ms_ = batch[-1][0] + 1
-        await asyncio.sleep(0.2)
+        # Filtrar solo velas cerradas (excluir la vela en curso)
+        closed_batch = [v for v in batch if v[0] < now_ms]
+        if not closed_batch:
+            break
 
-    logger.info(f"[{symbol} {timeframe}] Catch-up insertadas ~{total_saved} velas.")
-    return total_saved
+        rows = MarketDB.ccxt_ohlcv_to_rows(closed_batch, db_symbol, timeframe)
+        total += db.upsert_ohlcv_batch(rows)
 
-# --------------------------
-# Una pasada completa (todos símbolos/TFs)
-# --------------------------
-async def one_pass_all(config_path: str) -> int:
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-    default_tfs = cfg.get("defaults", {}).get("timeframes", ["1m"])
-    symbols_cfg: Dict = cfg.get("symbols", {})
+        cursor = batch[-1][0] + tf_ms
+        time.sleep(ex.rateLimit / 1000.0)
 
-    sem = asyncio.Semaphore(MAX_CONCURRENT)
-    total = 0
+        if len(batch) < CCXT_LIMIT:
+            if cursor >= now_ms:
+                break
 
-    async def worker(ccxt_symbol: str, tfs: List[str]):
-        nonlocal total
-        async with sem:
-            for tf in tfs:
-                total += await catch_up_symbol_tf(ccxt_symbol, tf)
-
-    tasks = []
-    for sym, stg in symbols_cfg.items():
-        tfs = stg.get("timeframes", default_tfs)
-        ccxt_symbol = stg.get("ccxt_symbol") or sym
-        tasks.append(worker(ccxt_symbol, tfs))
-
-    await asyncio.gather(*tasks)
+    logger.info(f"[{db_symbol}][{timeframe}] backfill completado. filas: {total}")
     return total
 
-def get_min_tf_ms_from_config(config_path: str) -> int:
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-    default_tfs = cfg.get("defaults", {}).get("timeframes", ["1m"])
-    symbols_cfg: Dict = cfg.get("symbols", {})
 
-    tfs = set()
-    for _, stg in symbols_cfg.items():
-        tfs.update(stg.get("timeframes", default_tfs))
-    if not tfs:
-        tfs = set(default_tfs)
-    return min(timeframe_to_ms(tf) for tf in tfs)
+def poll_loop(interval_sec: int = 20) -> None:
+    """
+    Bucle de polling:
+    - Para cada símbolo/TF, hace un backfill pequeño + inserta la última vela cerrada.
+    - Repite cada interval_sec.
+    """
+    cfg = load_symbols_config(CONFIG_PATH)
+    db = MarketDB()
+    ex = make_exchange()
+    ex.load_markets()
 
-# --------------------------
-# Bucle infinito
-# --------------------------
-async def run_forever(config_path: str = CONFIG_PATH):
-    await exchange.load_markets()
-    min_tf_ms = get_min_tf_ms_from_config(config_path)
-    logger.info(f"Min timeframe en config = {min_tf_ms/1000:.0f}s. Entrando en bucle… Ctrl+C para detener.")
+    symbols = cfg["symbols"]
 
     while True:
-        try:
-            inserted = await one_pass_all(config_path)
-            logger.info(f"Pasada completada. Velas insertadas ~{inserted}.")
-        except Exception as e:
-            logger.exception(f"Error en pasada: {e}")
+        start = time.time()
+        for s in symbols:
+            ccxt_symbol = s["ccxt_symbol"]
+            db_symbol = s["id"]
+            tfs = s.get("timeframes", ["1m", "5m", "15m", "1h", "4h", "1d"])
 
-        sleep_s = next_bar_sleep_seconds(min_tf_ms)
-        logger.info(f"Esperando {sleep_s:.1f}s hasta el próximo cierre del TF más corto…")
-        await asyncio.sleep(sleep_s)
+            for tf in tfs:
+                try:
+                    backfill_from_last(ex, db, ccxt_symbol, db_symbol, tf, overlap_bars=2)
+                except Exception as e:
+                    logger.exception(f"Error en backfill {db_symbol} {tf}: {e}")
 
-async def main():
-    try:
-        await run_forever(CONFIG_PATH)
-    except asyncio.CancelledError:
-        pass
-    except KeyboardInterrupt:
-        logger.info("Cancelado por el usuario.")
-    finally:
-        try:
-            await exchange.close()
-        except Exception:
-            pass
-        ENGINE.dispose()
-        logger.info("Cerrado limpio.")
+        elapsed = time.time() - start
+        sleep_time = max(1.0, interval_sec - elapsed)
+        time.sleep(sleep_time)
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Ejecuta: python -m core.data.realtime_updater
+    poll_loop(interval_sec=20)

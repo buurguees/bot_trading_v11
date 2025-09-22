@@ -1,0 +1,224 @@
+# ============================================================
+# BOT TRADING — Training Config (enterprise)
+# Archivo: config/train/training.yaml
+# ============================================================
+
+system:
+  seed: 42
+  device: "cpu"         # "cuda" si tienes GPU
+  num_workers: 4        # DataLoader / jobs paralelos (si aplica)
+  fp16: false           # mixed precision (true si GPU estable)
+
+data:
+  db_url_env: "DB_URL"                      # se toma de config/.env
+  symbols_file: "config/market/symbols.yaml"
+  symbols_override: []                      # [] -> usa YAML; o ej: ["BTCUSDT","ETHUSDT"]
+  timeframes: ["1m","5m","15m","1h","4h","1d"]  # se validan contra cada símbolo
+  window: 256                               # barras por muestra en el encoder
+  min_rows_per_tf: 800                      # seguridad (EMA200 + margen)
+  # Rango global de datos (se usa si NO se define walk_forward)
+  date_range:
+    start: "2022-01-01T00:00:00Z"
+    end:   "2025-09-01T00:00:00Z"
+
+walk_forward:
+  enabled: true
+  # Cada split: train_span + val_span, luego se desliza por step
+  train_span_days: 240
+  val_span_days: 60
+  step_days: 60
+  n_splits_max: 8
+
+features:
+  # Columnas que el encoder espera (ya calculadas en market.features)
+  numerical: ["rsi_14","macd","macd_signal","macd_hist","ema_20","ema_50","ema_200","atr_14","obv","supertrend"]
+  discrete:  ["st_direction"]
+  smc_flags: ["fvg_up","fvg_dn","swing_high","swing_low","bos","choch","ob_bull","ob_bear"]
+  normalization:
+    numerical: "zscore_window"      # z-score por ventana
+    discrete: "none"
+    smc_flags: "none"
+
+encoder:
+  type: "tcn"                     # "tcn" | "lstm"
+  d_model: 128
+  hidden: 128
+  layers: 3
+  kernel_size: 3
+  base_dilation: 1
+  dropout: 0.1
+  n_heads: 4                      # multi-head attention para fusión TF
+  query_tf_default: "1m"          # TF que actúa como query en la atención
+
+targets:                          # Definición de etiquetas para tareas supervisadas
+  direction:
+    # Etiqueta 3 clases: long / short / flat usando retorno futuro normalizado por ATR
+    horizon_bars_by_tf:
+      "1m": 30
+      "5m": 24
+      "15m": 16
+      "1h": 8
+      "4h": 6
+      "1d": 3
+    # ret_norm = (close[t+h]-close[t]) / max(1e-8, atr_14[t])
+    long_threshold:  +0.50        # > +0.50 -> long
+    short_threshold: -0.50        # < -0.50 -> short
+    flat_band: true               # entre umbrales -> flat
+  regime:
+    # Binaria/multilabel simple: trend vs range + bucket de vol (Q1..Q4)
+    trend_rule:
+      ema_fast: 20
+      ema_slow: 50
+      min_spread_atr: 0.15        # |ema20-ema50|/atr >= 0.15 -> trend; else range
+    vol_buckets: 4                # cuantiles sobre atr_14/close
+  smc:
+    # Etiqueta por setups; multitarget (multi-hot)
+    use_flags: ["bos","choch","fvg_up","fvg_dn","ob_bull","ob_bear"]
+    min_support: 3                # requiere que el flag se mantenga ≥ N barras (robustez)
+
+supervised_training:
+  optimizer:
+    name: "adamw"
+    lr: 0.0008
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+  scheduler:
+    name: "cosine"
+    warmup_steps: 500
+    min_lr: 0.00005
+  batch_size: 64
+  max_epochs: 30
+  early_stopping:
+    metric: "val_macro_f1"        # o "val_accuracy"
+    patience: 5
+    mode: "max"
+  class_weights:
+    direction: [1.0, 1.0, 0.7]    # [long, short, flat] — reduce sesgo a flat
+  grad_clip_norm: 1.0
+
+ppo_execution:
+  # Política RL para la cabeza de ejecución (micro-timing)
+  env:
+    action_space:
+      discrete_actions: ["open_long","open_short","hold","close"]
+      continuous_heads:
+        limit_offset_bp: true     # basis points del límite (+/-)
+        max_offset_bp: 25
+    episode:
+      max_steps: 1024
+      max_position_bars: 300
+    costs:
+      taker_fee_bp: 5             # 5 bps
+      maker_fee_bp: 1
+      slippage_bp: 3
+      borrow_rate_bp: 0           # si aplica
+    reward_shaping:
+      pnl_atr_weight: 1.0
+      mae_penalty: 0.4
+      slippage_penalty: 0.2
+      hold_cost: 0.05
+      gate_bonus: 0.15            # operar a favor de Direction/Regime
+  algo:
+    gamma: 0.995
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.01
+    vf_coef: 0.5
+    n_steps: 2048
+    batch_size: 256
+    n_epochs: 10
+    learning_rate: 0.0003
+    target_kl: 0.02
+    grad_clip_norm: 1.0
+  rollout:
+    parallel_envs: 4
+    eval_every_episodes: 50
+    save_every_episodes: 200
+
+evaluation:
+  metrics:
+    - "accuracy"
+    - "macro_f1"
+    - "auc_ovr"
+    - "sharpe"
+    - "sortino"
+    - "calmar"
+    - "profit_factor"
+    - "winrate"
+    - "max_dd"
+  backtest:
+    engine: "plans"               # usa planner + OMS sim
+    fees_bp:
+      taker: 5
+      maker: 1
+    slippage_bp: 3
+    latency_ms: 80
+    warmup_bars: 300
+    max_dd_day_pct: 3.0
+
+# Configuración para minería de estrategias
+strategy_mining:
+  window_days: 730                # 2 años de datos históricos para minería
+
+registry:
+  table: "ml.model_registry"
+  promoted_flag: true
+  save_artifacts: true
+  artifact_format:
+    direction: "sklearn.pkl"      # o torch .pt
+    regime: "sklearn.pkl"
+    smc: "sklearn.pkl"
+    execution: "sb3_ppo.zip"      # Stable-Baselines3 compat
+  promote_rules:
+    direction:
+      val_macro_f1_min: 0.48
+    regime:
+      val_accuracy_min: 0.60
+    smc:
+      val_macro_f1_min: 0.45
+    execution:
+      backtest:
+        sharpe_min: 1.2
+        max_dd_max: 12.0
+        profit_factor_min: 1.3
+
+logging:
+  run_name_prefix: "bt_v11"
+  tensorboard: true
+  log_dir: "runs/"
+  checkpoint_dir: "models/checkpoints/"
+  save_best_only: true
+  verbose: 1
+
+# Configuración de heads específicas
+heads:
+  direction:
+    query_tf: "1m"                    # TF para inferencia de direction
+  regime:
+    query_tf: "1m"                    # TF para inferencia de regime
+  smc:
+    query_tf: "1m"                    # TF para inferencia de smc
+  execution:
+    query_tf: "1m"                    # TF para inferencia de execution
+
+# Configuración del planner (trade planning)
+planner:
+  execution:
+    ttl_minutes: 60                   # TTL de los trade plans
+    risk_pct: 0.5                     # % de riesgo por trade
+    leverage: 2.0                     # Leverage por defecto
+    account_balance_usdt: 1000.0      # Balance para sizing
+    atr_sl_mult: 1.5                  # Multiplicador ATR para stop loss
+    atr_tp_mult_1: 1.0                # Multiplicador ATR para TP1 (1R)
+    atr_tp_mult_2: 2.0                # Multiplicador ATR para TP2 (2R)
+
+trainer_schedule:
+  # Orden recomendado:
+  - step: "train_supervised"
+    tasks: ["direction","regime","smc"]
+  - step: "freeze_encoder_and_pretrain_policy"   # imitation learning opcional
+    enabled: false
+  - step: "train_ppo_execution"
+    tasks: ["execution"]
+  - step: "evaluate_and_register"
+    tasks: ["direction","regime","smc","execution"]

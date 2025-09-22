@@ -1,0 +1,40 @@
+# config/market/symbols.yaml
+# Lista de símbolos a trabajar en Bitget (CCXT).
+# ccxt_symbol: para USDT-perp (swap) usa el sufijo :USDT (p.ej., BTC/USDT:USDT)
+# id: etiqueta interna para la BD (coincide con symbol en market.historical_data)
+
+exchange: bitget
+default_years_history: 2
+
+symbols:
+  # Alta liquidez
+  - id: BTCUSDT
+    ccxt_symbol: BTC/USDT:USDT
+    market_type: swap # perpetuo (futuros)
+    timeframes: [ "1m", "5m", "15m", "1h", "4h", "1d" ]
+
+  - id: ETHUSDT
+    ccxt_symbol: ETH/USDT:USDT
+    market_type: swap # perpetuo (futuros)
+    timeframes: [ "1m", "5m", "15m", "1h", "4h", "1d" ]
+
+  - id: XRPUSDT
+    ccxt_symbol: XRP/USDT:USDT
+    market_type: swap # perpetuo (futuros)
+    timeframes: [ "1m", "5m", "15m", "1h", "4h", "1d" ]
+
+  # Alta volatilidad
+  - id: ADAUSDT
+    ccxt_symbol: ADA/USDT:USDT
+    market_type: swap # perpetuo (futuros)
+    timeframes: [ "1m", "5m", "15m", "1h", "4h", "1d" ]
+
+  - id: SOLUSDT
+    ccxt_symbol: SOL/USDT:USDT
+    market_type: swap # perpetuo (futuros)
+    timeframes: [ "1m", "5m", "15m", "1h", "4h", "1d" ]
+
+  - id: DOGEUSDT
+    ccxt_symbol: DOGE/USDT:USDT
+    market_type: swap # perpetuo (futuros)
+    timeframes: [ "1m", "5m", "15m", "1h", "4h", "1d" ]

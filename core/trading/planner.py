@@ -1,198 +1,233 @@
-import os, json
-from typing import Optional, Dict, Any
-from dataclasses import is_dataclass, asdict
-from sqlalchemy import create_engine, text, bindparam
-from sqlalchemy.dialects.postgresql import JSONB
+"""
+Planner (Capa 6)
+================
+Lee:
+  - ml.agent_preds (última predicción por símbolo/TF base)
+  - market.features (para close/ATR de la vela cerrada en TF de ejecución)
+  - config/train/training.yaml (query_tf por head opcional; parámetros genéricos)
+Escribe:
+  - trading.trade_plans (INSERT/UPSERT) con status='planned'
+
+Qué hace:
+  - Gating jerárquico simple y explicable: si (direction.conf >= thr_dir) & (regime == 'trend') &
+    (smc == 'bull' / 'bear') -> propone plan long/short.
+  - Calcula entry_limit mediante offset en bps; SL/TP por múltiplos de ATR; sizing por riesgo.
+  - Genera fields de explicación (source/rationale/confidence).
+
+Funciones:
+  - fetch_latest_preds(engine, symbol, qtf) -> dict por task
+  - fetch_last_feature_row(engine, symbol, qtf) -> Series(close, atr, ts)
+  - build_plan(symbol, preds, feat) -> dict plan listo para UPSERT
+  - upsert_plan(engine, plan)
+"""
+
+from __future__ import annotations
+
+import os, json, uuid, logging
+from datetime import timedelta
+from typing import Dict, Optional
+
+import pandas as pd
+from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-from .position_sizer import load_risk_params, plan_from_price
 
-load_dotenv("config/.env")
+from core.config.config_loader import load_training_config, load_symbols_config, extract_symbols_and_tfs, get_planner_config, load_risk_config_yaml
+from core.ml.encoders.multitf_encoder import TF_MS
+from core.ml.policy.ppo_execution import PPOExecutionPolicy   # para utilidades (_bps_to_multiplier)
 
-def _to_plain_dict(obj):
-    """Convierte dataclasses / SimpleNamespace / objetos a dict recursivamente."""
-    if obj is None:
-        return {}
-    if isinstance(obj, dict):
-        return obj
-    if is_dataclass(obj):
-        return asdict(obj)
-    if hasattr(obj, "__dict__"):
-        return {k: _to_plain_dict(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
-    return obj  # tipos primitivos
+load_dotenv(os.path.join("config", ".env"))
+DB_URL = os.getenv("DB_URL")
 
-def _dig(obj, *path, default=None):
-    cur = obj
-    for key in path:
-        if cur is None:
-            return default
-        if isinstance(cur, dict):
-            cur = cur.get(key, None)
-        else:
-            cur = getattr(cur, key, None)
-    return default if cur is None else cur
+logger = logging.getLogger("Planner")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s - %(message)s"))
+    logger.addHandler(h)
 
-def choose_leverage(entry_px: float, sl_px: float, side: int,
-                    atr: float, liq_buf_atr: float,
-                    lev_min: float, lev_max: float) -> float:
-    """
-    Aproximación para perps USDT lineales en modo aislado.
-    Distancia aproximada a liquidación ~ entry / L (ignorando margen de mantenimiento).
-    Exigimos que la distancia a liq sea MAYOR que (distancia al SL + buffer ATRs).
-    """
-    stop_dist = abs(entry_px - sl_px)
-    min_liq_dist = stop_dist + liq_buf_atr * atr
-    if min_liq_dist <= 0:
-        return float(lev_min)
+def _last_closed_ts(tf: str) -> pd.Timestamp:
+    now_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
+    tf_ms = TF_MS.get(tf, 60_000)
+    last_ms = (now_ms // tf_ms) * tf_ms - tf_ms
+    return pd.to_datetime(last_ms, unit="ms", utc=True)
 
-    lev_cap = entry_px / min_liq_dist           # L máximo permitido por buffer
-    L = max(lev_min, min(lev_max, float(lev_cap)))
-    return round(L, 2)
-ENGINE = create_engine(os.getenv("DB_URL"))
-
-# Cache simple para saber si existe la columna bar_ts en trading.TradePlans
-_HAS_BAR_TS: Optional[bool] = None
-
-def _check_has_bar_ts(conn) -> bool:
-    global _HAS_BAR_TS
-    if _HAS_BAR_TS is not None:
-        return _HAS_BAR_TS
-    q = text(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema='trading' AND table_name='tradeplans' AND column_name='bar_ts'
-        LIMIT 1
-        """
-    )
-    _HAS_BAR_TS = conn.execute(q).fetchone() is not None
-    return _HAS_BAR_TS
-
-def _get_entry_price(c, symbol: str, tf: str, ts) -> Optional[float]:
-    q = text("""
-        SELECT close FROM trading.HistoricalData
-        WHERE symbol=:s AND timeframe=:tf AND timestamp<=:ts
-        ORDER BY timestamp DESC
-        LIMIT 1
+def fetch_latest_preds(engine, symbol: str, qtf: str) -> Dict:
+    sql = text("""
+        SELECT task, pred_label, pred_conf, probs
+        FROM ml.agent_preds
+        WHERE symbol=:s AND timeframe=:tf AND ts = (
+            SELECT MAX(ts) FROM ml.agent_preds WHERE symbol=:s AND timeframe=:tf
+        )
     """)
-    row = c.execute(q, {"s":symbol,"tf":tf,"ts":ts}).fetchone()
-    return float(row[0]) if row else None
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"s": symbol, "tf": qtf}).mappings().all()
+    out = {}
+    for r in rows:
+        probs = r["probs"]
+        if isinstance(probs, str):
+            try: probs = json.loads(probs)
+            except Exception: probs = {}
+        out[r["task"]] = {"label": r["pred_label"], "conf": float(r.get("pred_conf") or 0), "probs": probs}
+    return out
 
-def _get_atr(c, symbol: str, tf: str, ts) -> Optional[float]:
-    # Primero intenta leer desde Features (columna atr14)
-    qf = text("""
-        SELECT atr14 FROM trading.Features
-        WHERE symbol=:s AND timeframe=:tf AND timestamp=:ts
-        LIMIT 1
+def fetch_last_feature_row(engine, symbol: str, qtf: str) -> Optional[Dict]:
+    lc = _last_closed_ts(qtf)
+    sql = text("""
+        SELECT f.ts, f.atr_14, h.close
+        FROM market.features f
+        JOIN market.historical_data h ON f.symbol = h.symbol 
+            AND f.timeframe = h.timeframe 
+            AND f.ts = h.ts
+        WHERE f.symbol=:s AND f.timeframe=:tf AND f.ts<=:lc
+        ORDER BY f.ts DESC LIMIT 1;
     """)
-    row = c.execute(qf, {"s":symbol,"tf":tf,"ts":ts}).fetchone()
-    if row and row[0] is not None:
-        return float(row[0])
-    # Si no hay, toma la última disponible antes de ts
-    qf2 = text("""
-        SELECT atr14 FROM trading.Features
-        WHERE symbol=:s AND timeframe=:tf AND timestamp<=:ts
-        ORDER BY timestamp DESC
-        LIMIT 1
+    with engine.begin() as conn:
+        row = conn.execute(sql, {"s": symbol, "tf": qtf, "lc": lc}).mappings().first()
+    return dict(row) if row else None
+
+def _bps_to_multiplier(bps: int, side: str, invert: bool = False) -> float:
+    m = bps/10000.0
+    return (1.0 - m if side=="long" else 1.0 + m) if not invert else (1.0 + m if side=="long" else 1.0 - m)
+
+def _risk_qty(close: float, sl: float, risk_pct: float, balance_usdt: float, leverage: float) -> float:
+    dist = abs(close - sl)
+    if dist <= 0: return 0.0
+    risk_usdt = balance_usdt * risk_pct / 100.0
+    return max(0.0, (risk_usdt * leverage) / dist)
+
+def _conf(preds: Dict, key: str) -> float:
+    if key not in preds: return 0.0
+    lab = preds[key]["label"]
+    return float((preds[key]["probs"] or {}).get(lab, preds[key].get("conf", 0.0)))
+
+def build_plan(symbol: str, qtf: str, preds: Dict, feat: Dict, cfg: Dict) -> Optional[Dict]:
+    # Cargar configuración del planner desde risk.yaml
+    risk_cfg = load_risk_config_yaml()
+    planner_cfg = risk_cfg.get("planner", {})
+    thresholds = planner_cfg.get("thresholds", {})
+    gating = planner_cfg.get("gating", {})
+    
+    # Umbrales configurables
+    thr_dir = thresholds.get("direction_confidence_min", 0.30)
+    regime_required = thresholds.get("regime_required", "trend")
+    smc_alignment = thresholds.get("smc_alignment", True)
+    
+    # gating
+    d = preds.get("direction", {}).get("label")
+    r = preds.get("regime", {}).get("label")
+    s = preds.get("smc", {}).get("label")
+    
+    # Verificaciones de gating
+    if not (d and r and s): return None
+    if r != regime_required: return None
+    
+    if smc_alignment:
+        direction_long_smc = gating.get("direction_long_smc", "bull")
+        direction_short_smc = gating.get("direction_short_smc", "bear")
+        if d == "long" and s != direction_long_smc: return None
+        if d == "short" and s != direction_short_smc: return None
+    
+    if _conf(preds, "direction") < thr_dir: return None
+
+    close = float(feat["close"])
+    atr   = float(feat.get("atr_14") or 0.0)
+    ts    = pd.Timestamp(feat["ts"]).to_pydatetime()
+
+    # Cargar configuración del planner desde training.yaml
+    planner_cfg = get_planner_config(cfg)
+    
+    # Parámetros básicos
+    ppo_env = (cfg.get("ppo_execution") or {}).get("env", {})
+    max_offset_bp = int(ppo_env.get("action_space", {}).get("max_offset_bp", 25))
+    offset_bp = min(10, max_offset_bp)
+
+    side = "long" if d=="long" else "short"
+    entry_price = close * _bps_to_multiplier(offset_bp, side, invert=False)
+    
+    # Usar configuración del planner
+    atr_sl_mult = planner_cfg["atr_sl_mult"]
+    atr_tp_mult_1 = planner_cfg["atr_tp_mult_1"]
+    atr_tp_mult_2 = planner_cfg["atr_tp_mult_2"]
+    
+    if side=="long":
+        sl = entry_price - atr_sl_mult*atr
+        tp1 = entry_price + atr_tp_mult_1*atr
+        tp2 = entry_price + atr_tp_mult_2*atr
+    else:
+        sl = entry_price + atr_sl_mult*atr
+        tp1 = entry_price - atr_tp_mult_1*atr
+        tp2 = entry_price - atr_tp_mult_2*atr
+
+    leverage = planner_cfg["leverage"]
+    balance = planner_cfg["account_balance_usdt"]
+    risk_pct = planner_cfg["risk_pct"]
+    qty = _risk_qty(entry_price, sl, risk_pct, balance, leverage)
+
+    plan = {
+      "symbol": symbol, "timeframe": qtf, "ts": ts,
+      "plan_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{symbol}|{qtf}|{ts.isoformat()}|planner")),
+      "side": side, "entry_type": "limit",
+      "entry_price": round(entry_price,6), "limit_offset_bp": offset_bp,
+      "stop_loss": round(sl,6),
+      "tp_targets": json.dumps([{"p": round(tp1,6), "qty_pct": 50},
+                                {"p": round(tp2,6), "qty_pct": 50}]),
+      "qty": qty, "leverage": leverage, "risk_pct": risk_pct,
+      "max_loss_usdt": abs(entry_price-sl)*qty,
+      "take_profit_usdt": abs(tp1-entry_price)*qty,
+      "valid_until": ts + timedelta(minutes=planner_cfg["ttl_minutes"]),
+      "route": "bitget_perp", "account_id": "default",
+      "source": json.dumps({"from": "planner", "preds": {k: v["label"] for k,v in preds.items()}}),
+      "confidence": (_conf(preds,"direction")*0.5 + _conf(preds,"smc")*0.3 + _conf(preds,"regime")*0.2),
+      "rationale": json.dumps({"gating": "dir>=thr & regime=trend & smc aligned"}),
+      "tags": ["planner","gated"], "status": "planned"
+    }
+    return plan
+
+def upsert_plan(engine, plan: Dict):
+    sql = text("""
+      INSERT INTO trading.trade_plans
+      (symbol,timeframe,ts,plan_id,side,entry_type,entry_price,limit_offset_bp,stop_loss,tp_targets,
+       qty,leverage,risk_pct,max_loss_usdt,take_profit_usdt,valid_until,route,account_id,
+       source,confidence,rationale,tags,status)
+      VALUES
+      (:symbol,:timeframe,:ts,:plan_id,:side,:entry_type,:entry_price,:limit_offset_bp,:stop_loss,:tp_targets,
+       :qty,:leverage,:risk_pct,:max_loss_usdt,:take_profit_usdt,:valid_until,:route,:account_id,
+       :source,:confidence,:rationale,:tags,:status)
+      ON CONFLICT (symbol,timeframe,ts,plan_id) DO UPDATE SET
+        side=EXCLUDED.side, entry_type=EXCLUDED.entry_type, entry_price=EXCLUDED.entry_price,
+        limit_offset_bp=EXCLUDED.limit_offset_bp, stop_loss=EXCLUDED.stop_loss, tp_targets=EXCLUDED.tp_targets,
+        qty=EXCLUDED.qty, leverage=EXCLUDED.leverage, risk_pct=EXCLUDED.risk_pct,
+        max_loss_usdt=EXCLUDED.max_loss_usdt, take_profit_usdt=EXCLUDED.take_profit_usdt,
+        valid_until=EXCLUDED.valid_until, route=EXCLUDED.route, account_id=EXCLUDED.account_id,
+        source=EXCLUDED.source, confidence=EXCLUDED.confidence, rationale=EXCLUDED.rationale,
+        tags=EXCLUDED.tags, status=EXCLUDED.status;
     """)
-    row = c.execute(qf2, {"s":symbol,"tf":tf,"ts":ts}).fetchone()
-    return float(row[0]) if row and row[0] is not None else None
+    with engine.begin() as conn:
+        conn.execute(sql, plan)
 
-def plan_and_store(symbol: str, tf: str, ts, side: int, strength: float,
-                   direction_ver_id: int, engine=ENGINE) -> int:
-    if side == 0:
-        return -1
-    with engine.begin() as c:
-        entry_px = _get_entry_price(c, symbol, tf, ts)
-        atr      = _get_atr(c, symbol, tf, ts)
-        if entry_px is None or atr is None:
-            raise RuntimeError("No se pudo obtener entry_px o ATR para planificar el trade.")
+def run_once() -> int:
+    cfg = load_training_config()
+    cfg_symbols = load_symbols_config()
+    symbols, _ = extract_symbols_and_tfs(cfg_symbols, cfg)
 
-        rp = load_risk_params(tf)  # de config/risk.yaml
-        
-        # Acceso directo a atributos del dataclass RiskParams
-        mmode   = rp.margin_mode
-        equity  = float(rp.equity)
-        risk_pct= float(rp.risk_pct)
-        LEV_MIN = 5.0                    # mínimo operativo (o léelo del YAML si lo tienes)
-        LEV_MAX = float(rp.lev_max)
-        LIQ_BUF = float(rp.liq_buf_atr)
-        K_SL    = float(rp.k_sl)
-        K_TP    = float(rp.k_tp)
-        
-        if side == 1:  # LONG
-            sl_px = entry_px - K_SL * atr
-            tp_px = entry_px + K_TP * atr
-        else:  # SHORT
-            sl_px = entry_px + K_SL * atr
-            tp_px = entry_px - K_TP * atr
-        
-        # Calcular leverage dinámico
-        leverage = choose_leverage(entry_px, sl_px, side, atr, LIQ_BUF, LEV_MIN, LEV_MAX)
-        
-        # tamaño de posición (no depende del leverage; el riesgo lo marca el SL)
-        # risk_pct * equity / distancia al SL
-        qty = (equity * risk_pct) / max(1e-9, abs(entry_px - sl_px))
-        
-        # guarda el razonamiento útil:
-        reason = {
-            "direction_ver_id": direction_ver_id,
-            "strength": float(strength),
-            "atr": float(atr),
-            "tf": tf,
-            "k_sl": float(K_SL),
-            "k_tp": float(K_TP),
-            "lev_min": float(LEV_MIN),
-            "lev_max": float(LEV_MAX),
-            "liq_buf_atr": float(LIQ_BUF),
-            "equity": float(equity),
-        }
+    heads = cfg.get("heads", {})
+    qtf = heads.get("execution", {}).get("query_tf",
+          (cfg.get("encoder", {}) or {}).get("query_tf_default", "1m"))
 
-        # Insert con o sin bar_ts según exista la columna en la tabla
-        if _check_has_bar_ts(c):
-            q = text(
-                """
-                INSERT INTO trading.TradePlans
-                (created_at, bar_ts, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
-                VALUES (now(), :bt, :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
-                RETURNING id
-                """
-            ).bindparams(bindparam("rs", type_=JSONB()))
-            params = {
-                "bt": ts,
-                "s": symbol,
-                "tf": tf,
-                "sd": side,
-                "e": float(entry_px),
-                "sl": float(sl_px),
-                "tp": float(tp_px),
-                "r": float(risk_pct),
-                "q": float(qty),
-                "lv": float(leverage),
-                "mm": mmode,
-                "rs": reason,
-            }
-        else:
-            q = text(
-                """
-                INSERT INTO trading.TradePlans
-                (created_at, symbol, timeframe, side, entry_px, sl_px, tp_px, risk_pct, qty, leverage, margin_mode, reason, status)
-                VALUES (now(), :s, :tf, :sd, :e, :sl, :tp, :r, :q, :lv, :mm, :rs, 'planned')
-                RETURNING id
-                """
-            ).bindparams(bindparam("rs", type_=JSONB()))
-            params = {
-                "s": symbol,
-                "tf": tf,
-                "sd": side,
-                "e": float(entry_px),
-                "sl": float(sl_px),
-                "tp": float(tp_px),
-                "r": float(risk_pct),
-                "q": float(qty),
-                "lv": float(leverage),
-                "mm": mmode,
-                "rs": reason,
-            }
+    engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
+    written = 0
+    for sym in symbols:
+        preds = fetch_latest_preds(engine, sym, qtf)
+        feat  = fetch_last_feature_row(engine, sym, qtf)
+        if not preds or not feat: 
+            logger.info(f"[{sym}] sin preds/feat para {qtf}")
+            continue
+        plan = build_plan(sym, qtf, preds, feat, cfg)
+        if not plan: 
+            continue
+        upsert_plan(engine, plan); written += 1
+        logger.info(f"[{sym}] plan {plan['side']} @ {plan['entry_price']} ts={plan['ts']}")
+    return written
 
-        plan_id = c.execute(q, params).scalar()
-        return int(plan_id)
+if __name__ == "__main__":
+    run_once()
