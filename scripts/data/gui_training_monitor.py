@@ -91,6 +91,62 @@ class EnhancedDBClient:
             existing = {r[0] for r in conn.execute(sql, {"s": schema, "t": table}).all()}
         return {col: col in existing for col in columns}
 
+    def fetch_training_data(self):
+        """Obtiene datos de entrenamiento desde la base de datos"""
+        try:
+            agents_query = """
+            SELECT 
+                agent_id,
+                symbol,
+                task,
+                status,
+                version,
+                metrics,
+                created_at,
+                promoted_at
+            FROM ml.agents
+            ORDER BY created_at DESC
+            LIMIT 500
+            """
+            predictions_query = """
+            SELECT 
+                task,
+                pred_conf,
+                created_at,
+                symbol
+            FROM ml.agent_preds
+            WHERE created_at >= NOW() - INTERVAL '24 hours'
+            ORDER BY created_at DESC
+            LIMIT 1000
+            """
+            promotion_history_query = """
+            SELECT 
+                promoted_at,
+                symbol,
+                task,
+                agent_id,
+                metrics->>'prev_sharpe' as prev_sharpe,
+                metrics->>'sharpe_ratio' as new_sharpe,
+                ((CAST(metrics->>'sharpe_ratio' AS FLOAT) - CAST(metrics->>'prev_sharpe' AS FLOAT)) 
+                 / CAST(metrics->>'prev_sharpe' AS FLOAT) * 100) as improvement_pct
+            FROM ml.agents
+            WHERE status = 'promoted' AND promoted_at IS NOT NULL
+            ORDER BY promoted_at DESC
+            LIMIT 100
+            """
+            with self.engine.begin() as conn:
+                agents_df = pd.read_sql_query(agents_query, conn)
+                predictions_df = pd.read_sql_query(predictions_query, conn)
+                promotion_df = pd.read_sql_query(promotion_history_query, conn)
+            return {
+                "agents": agents_df,
+                "predictions": predictions_df,
+                "promotion_history": promotion_df
+            }
+        except Exception as e:
+            logger.error(f"Error obteniendo datos de entrenamiento: {e}")
+            return {"agents": pd.DataFrame(), "predictions": pd.DataFrame(), "promotion_history": pd.DataFrame()}
+
     def pipeline_health_check(self) -> Dict[str, Any]:
         """Verificación completa de salud del pipeline"""
         health = {
