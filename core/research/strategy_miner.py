@@ -202,15 +202,24 @@ def mine_candidates(window_days: int = None) -> int:
 
     total_rows = 0
     cur = since
+    total_chunks = ((end_ts - cur).days // chunk_days) + 1
+    chunk_num = 0
+    
     with engine.begin() as conn:
         while cur < end_ts:
             nxt = min(cur + timedelta(days=chunk_days), end_ts)
+            chunk_num += 1
+            
+            logger.info(f"🔍 Procesando chunk {chunk_num}/{total_chunks}: {cur.strftime('%Y-%m-%d %H:%M')} → {nxt.strftime('%Y-%m-%d %H:%M')}")
+            
             chunk_rows = [dict(r) for r in conn.execute(sql_chunk, {"a": cur, "b": nxt}).mappings().all()]
             if chunk_rows:
                 for r in chunk_rows:
                     _accumulate(r)
                 total_rows += len(chunk_rows)
-                logger.info("Minería %s → %s: %d plans", cur, nxt, len(chunk_rows))
+                logger.info(f"  📊 {len(chunk_rows)} trade_plans procesados | Total acumulado: {total_rows}")
+            else:
+                logger.info(f"  ⚠️ Sin trade_plans en este período")
             cur = nxt
 
     if total_rows == 0:

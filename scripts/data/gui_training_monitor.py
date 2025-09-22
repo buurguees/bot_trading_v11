@@ -537,6 +537,10 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         # Variables para datos
         self.current_data = None
         
+        # Inicializar engine de base de datos
+        from sqlalchemy import create_engine
+        self.engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
+        
         # Setup UI
         self.setup_ui()
         
@@ -552,6 +556,7 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         self.tab_data_quality = ttk.Frame(self.notebook)
         self.tab_alerts = ttk.Frame(self.notebook)
         self.tab_training_data = ttk.Frame(self.notebook)
+        self.tab_phase1_logs = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab_dashboard, text="📊 Dashboard")
         self.notebook.add(self.tab_strategies, text="🎯 Estrategias")
@@ -559,6 +564,7 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         self.notebook.add(self.tab_data_quality, text="🔍 Calidad Datos")
         self.notebook.add(self.tab_alerts, text="⚠️ Alertas")
         self.notebook.add(self.tab_training_data, text="🤖 Entrenamiento")
+        self.notebook.add(self.tab_phase1_logs, text="📊 Phase 1 Logs")
         
         self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -581,6 +587,7 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         self.setup_data_quality_tab()
         self.setup_alerts_tab()
         self.setup_training_data_tab()
+        self.setup_phase1_logs_tab()
 
     def setup_training_data_tab(self):
         """Configura el tab de datos de entrenamiento"""
@@ -715,6 +722,85 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         self.tree_promotions.pack(side="left", fill="both", expand=True)
         scrollbar_promo_v.pack(side="right", fill="y")
         scrollbar_promo_h.pack(side="bottom", fill="x")
+
+    def setup_phase1_logs_tab(self):
+        """Configura el tab de logs de Phase 1"""
+        # Frame principal con controles
+        controls_frame = ttk.Frame(self.tab_phase1_logs)
+        controls_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Controles de filtrado
+        ttk.Label(controls_frame, text="Filtrar por agente:").pack(side="left", padx=5)
+        self.phase1_agent_var = tk.StringVar(value="all")
+        agent_combo = ttk.Combobox(controls_frame, textvariable=self.phase1_agent_var,
+                                  values=["all", "direction", "regime", "smc"])
+        agent_combo.pack(side="left", padx=5)
+        
+        ttk.Label(controls_frame, text="Nivel de log:").pack(side="left", padx=5)
+        self.phase1_level_var = tk.StringVar(value="all")
+        level_combo = ttk.Combobox(controls_frame, textvariable=self.phase1_level_var,
+                                  values=["all", "INFO", "WARNING", "ERROR"])
+        level_combo.pack(side="left", padx=5)
+        
+        # Botones de control
+        ttk.Button(controls_frame, text="🔄 Actualizar", 
+                  command=self.refresh_phase1_logs).pack(side="left", padx=5)
+        ttk.Button(controls_frame, text="🗑️ Limpiar", 
+                  command=self.clear_phase1_logs).pack(side="left", padx=5)
+        ttk.Button(controls_frame, text="💾 Exportar", 
+                  command=self.export_phase1_logs).pack(side="left", padx=5)
+        
+        # Frame para estadísticas
+        stats_frame = ttk.LabelFrame(self.tab_phase1_logs, text="📊 Estadísticas Phase 1", padding=5)
+        stats_frame.pack(fill="x", padx=5, pady=5)
+        
+        self.phase1_stats_vars = {
+            "total_predictions": tk.StringVar(value="0"),
+            "direction_preds": tk.StringVar(value="0"),
+            "regime_preds": tk.StringVar(value="0"),
+            "smc_preds": tk.StringVar(value="0"),
+            "errors_count": tk.StringVar(value="0"),
+            "last_activity": tk.StringVar(value="N/A")
+        }
+        
+        stats_labels = [
+            ("Total Predicciones:", "total_predictions"),
+            ("Direction:", "direction_preds"),
+            ("Regime:", "regime_preds"),
+            ("SMC:", "smc_preds"),
+            ("Errores:", "errors_count"),
+            ("Última Actividad:", "last_activity")
+        ]
+        
+        for i, (label, var_key) in enumerate(stats_labels):
+            row = i // 3
+            col = i % 3
+            frame = ttk.Frame(stats_frame)
+            frame.grid(row=row, column=col, sticky="ew", padx=10, pady=2)
+            stats_frame.columnconfigure(col, weight=1)
+            ttk.Label(frame, text=label, font=("Arial", 9, "bold")).pack(anchor="w")
+            ttk.Label(frame, textvariable=self.phase1_stats_vars[var_key], font=("Arial", 10)).pack(anchor="w")
+        
+        # Frame para logs
+        logs_frame = ttk.LabelFrame(self.tab_phase1_logs, text="📝 Logs en Tiempo Real", padding=5)
+        logs_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Text widget para logs con scroll
+        self.phase1_logs_text = ScrolledText(logs_frame, height=20, font=("Consolas", 9), wrap=tk.WORD)
+        self.phase1_logs_text.pack(fill="both", expand=True)
+        
+        # Configurar tags de colores para diferentes niveles de log
+        self.phase1_logs_text.tag_config("INFO", foreground="blue")
+        self.phase1_logs_text.tag_config("WARNING", foreground="orange", font=("Consolas", 9, "bold"))
+        self.phase1_logs_text.tag_config("ERROR", foreground="red", font=("Consolas", 9, "bold"))
+        self.phase1_logs_text.tag_config("SUCCESS", foreground="green", font=("Consolas", 9, "bold"))
+        self.phase1_logs_text.tag_config("TIMESTAMP", foreground="gray")
+        self.phase1_logs_text.tag_config("AGENT", foreground="purple", font=("Consolas", 9, "bold"))
+        
+        # Auto-scroll al final por defecto
+        self.phase1_auto_scroll = tk.BooleanVar(value=True)
+        ttk.Checkbutton(controls_frame, text="Auto-scroll", 
+                       variable=self.phase1_auto_scroll).pack(side="right", padx=5)
 
     def setup_dashboard_tab(self):
         """Configura el tab de dashboard"""
@@ -1184,6 +1270,229 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
             )
             self.tree_promotions.insert("", "end", values=values)
 
+    # =================== MÉTODOS DE PHASE 1 LOGS ===================
+    def refresh_phase1_logs(self):
+        """Actualiza los logs de Phase 1 desde la base de datos"""
+        try:
+            # Obtener logs recientes de agent_preds
+            logs_data = self.fetch_phase1_logs()
+            self.update_phase1_logs_display(logs_data)
+            self.update_phase1_stats(logs_data)
+        except Exception as e:
+            logger.error(f"Error actualizando logs Phase 1: {e}")
+
+    def fetch_phase1_logs(self):
+        """Obtiene logs de Phase 1 desde la base de datos"""
+        try:
+            with self.engine.begin() as conn:
+                # Obtener predicciones recientes de agentes
+                logs_query = """
+                SELECT 
+                    symbol,
+                    timeframe,
+                    task,
+                    pred_label,
+                    pred_conf,
+                    created_at,
+                    ts,
+                    probs
+                FROM ml.agent_preds
+                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                ORDER BY created_at DESC
+                LIMIT 1000
+                """
+                logs_df = pd.read_sql_query(logs_query, conn)
+                
+                # Obtener estadísticas de errores (simulado - en un sistema real tendrías una tabla de logs)
+                error_query = """
+                SELECT COUNT(*) as error_count
+                FROM ml.agent_preds
+                WHERE created_at >= NOW() - INTERVAL '1 hour'
+                AND pred_conf < 0.1
+                """
+                error_count = conn.execute(text(error_query)).scalar() or 0
+                
+                return {
+                    "logs": logs_df,
+                    "error_count": error_count
+                }
+        except Exception as e:
+            logger.error(f"Error obteniendo logs Phase 1: {e}")
+            return {"logs": pd.DataFrame(), "error_count": 0}
+
+    def update_phase1_logs_display(self, logs_data):
+        """Actualiza la visualización de logs"""
+        if "logs" not in logs_data or logs_data["logs"].empty:
+            return
+            
+        logs_df = logs_data["logs"]
+        
+        # Aplicar filtros
+        filtered_df = logs_df.copy()
+        
+        if self.phase1_agent_var.get() != "all":
+            filtered_df = filtered_df[filtered_df['task'] == self.phase1_agent_var.get()]
+        
+        # Limpiar logs existentes
+        self.phase1_logs_text.delete(1.0, tk.END)
+        
+        # Añadir header
+        timestamp = datetime.now(tz=APP_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        self.phase1_logs_text.insert(tk.END, f"📊 PHASE 1 LOGS - {timestamp}\n", "TIMESTAMP")
+        self.phase1_logs_text.insert(tk.END, "=" * 80 + "\n\n")
+        
+        # Detectar tendencias continuas
+        trends = self._detect_trends(filtered_df)
+        if trends:
+            self.phase1_logs_text.insert(tk.END, "📈 TENDENCIAS ACTIVAS:\n", "SUCCESS")
+            for trend in trends:
+                self.phase1_logs_text.insert(tk.END, f"  {trend}\n", "SUCCESS")
+            self.phase1_logs_text.insert(tk.END, "\n" + "-" * 80 + "\n\n", "TIMESTAMP")
+        
+        # Procesar cada log
+        for _, row in filtered_df.head(200).iterrows():  # Limitar a 200 logs recientes
+            timestamp = pd.to_datetime(row['created_at']).strftime("%H:%M:%S")
+            data_ts = pd.to_datetime(row['ts']).strftime("%H:%M:%S") if pd.notna(row['ts']) else "N/A"
+            agent = row['task']
+            symbol = row['symbol']
+            tf = row['timeframe']
+            label = row['pred_label']
+            conf = float(row['pred_conf']) if pd.notna(row['pred_conf']) else 0.0
+            probs = row.get('probs', '{}')
+            
+            # Determinar nivel de log basado en confianza
+            if conf < 0.3:
+                level = "WARNING"
+            elif conf < 0.1:
+                level = "ERROR"
+            else:
+                level = "INFO"
+            
+            # Formatear mensaje con información temporal
+            if data_ts != "N/A":
+                message = f"[{timestamp}] [{agent.upper()}] {symbol} {tf}: {label} (conf: {conf:.3f}) [data: {data_ts}]\n"
+            else:
+                message = f"[{timestamp}] [{agent.upper()}] {symbol} {tf}: {label} (conf: {conf:.3f})\n"
+            
+            # Insertar con colores
+            self.phase1_logs_text.insert(tk.END, f"[{timestamp}] ", "TIMESTAMP")
+            self.phase1_logs_text.insert(tk.END, f"[{agent.upper()}] ", "AGENT")
+            if data_ts != "N/A":
+                self.phase1_logs_text.insert(tk.END, f"{symbol} {tf}: {label} (conf: {conf:.3f}) [data: {data_ts}]\n", level)
+            else:
+                self.phase1_logs_text.insert(tk.END, f"{symbol} {tf}: {label} (conf: {conf:.3f})\n", level)
+        
+        # Auto-scroll si está habilitado
+        if self.phase1_auto_scroll.get():
+            self.phase1_logs_text.see(tk.END)
+
+    def update_phase1_stats(self, logs_data):
+        """Actualiza las estadísticas de Phase 1"""
+        if "logs" not in logs_data or logs_data["logs"].empty:
+            return
+            
+        logs_df = logs_data["logs"]
+        
+        # Calcular estadísticas
+        total_preds = len(logs_df)
+        direction_preds = len(logs_df[logs_df['task'] == 'direction'])
+        regime_preds = len(logs_df[logs_df['task'] == 'regime'])
+        smc_preds = len(logs_df[logs_df['task'] == 'smc'])
+        errors_count = logs_data.get("error_count", 0)
+        
+        # Última actividad
+        if not logs_df.empty:
+            last_activity = pd.to_datetime(logs_df['created_at'].iloc[0]).strftime("%H:%M:%S")
+        else:
+            last_activity = "N/A"
+        
+        # Actualizar variables
+        self.phase1_stats_vars["total_predictions"].set(str(total_preds))
+        self.phase1_stats_vars["direction_preds"].set(str(direction_preds))
+        self.phase1_stats_vars["regime_preds"].set(str(regime_preds))
+        self.phase1_stats_vars["smc_preds"].set(str(smc_preds))
+        self.phase1_stats_vars["errors_count"].set(str(errors_count))
+        self.phase1_stats_vars["last_activity"].set(last_activity)
+
+    def clear_phase1_logs(self):
+        """Limpia el área de logs"""
+        self.phase1_logs_text.delete(1.0, tk.END)
+        self.phase1_logs_text.insert(tk.END, "🗑️ Logs limpiados\n", "INFO")
+
+    def export_phase1_logs(self):
+        """Exporta los logs de Phase 1 a un archivo"""
+        try:
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+                title="Exportar logs Phase 1"
+            )
+            
+            if not filename:
+                return
+                
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("📊 BOT TRADING v11 - PHASE 1 LOGS\n")
+                f.write("=" * 50 + "\n")
+                f.write(f"Exportado: {datetime.now(tz=APP_TZ).strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write(self.phase1_logs_text.get(1.0, tk.END))
+                
+            messagebox.showinfo("Éxito", f"Logs exportados a: {filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error exportando logs: {str(e)}")
+
+    def _detect_trends(self, logs_df):
+        """Detecta tendencias continuas en los logs"""
+        if logs_df.empty:
+            return []
+        
+        trends = []
+        
+        # Agrupar por símbolo y agente
+        for (symbol, agent), group in logs_df.groupby(['symbol', 'task']):
+            if len(group) < 3:  # Necesitamos al menos 3 predicciones para una tendencia
+                continue
+                
+            # Ordenar por timestamp
+            group = group.sort_values('created_at')
+            
+            # Detectar secuencias consecutivas del mismo label
+            current_label = None
+            trend_start = None
+            trend_count = 0
+            max_conf = 0
+            
+            for _, row in group.iterrows():
+                label = row['pred_label']
+                conf = float(row['pred_conf']) if pd.notna(row['pred_conf']) else 0.0
+                ts = pd.to_datetime(row['created_at']).strftime("%H:%M:%S")
+                
+                if label == current_label:
+                    trend_count += 1
+                    max_conf = max(max_conf, conf)
+                else:
+                    # Finalizar tendencia anterior si era significativa
+                    if trend_count >= 3 and current_label is not None:
+                        trend_end = pd.to_datetime(group.iloc[group.index.get_loc(row.name) - 1]['created_at']).strftime("%H:%M:%S")
+                        trends.append(f"{symbol} {agent}: {current_label} x{trend_count} ({trend_start}→{trend_end}) conf:{max_conf:.2f}")
+                    
+                    # Iniciar nueva tendencia
+                    current_label = label
+                    trend_start = ts
+                    trend_count = 1
+                    max_conf = conf
+            
+            # Finalizar última tendencia si es significativa
+            if trend_count >= 3 and current_label is not None:
+                trend_end = pd.to_datetime(group.iloc[-1]['created_at']).strftime("%H:%M:%S")
+                trends.append(f"{symbol} {agent}: {current_label} x{trend_count} ({trend_start}→{trend_end}) conf:{max_conf:.2f}")
+        
+        # Ordenar por confianza descendente
+        trends.sort(key=lambda x: float(x.split('conf:')[1]) if 'conf:' in x else 0, reverse=True)
+        
+        return trends[:5]  # Top 5 tendencias
+
     def update_data_quality(self, data: Dict):
         """Actualiza la tabla de calidad de datos"""
         # Limpiar tabla
@@ -1408,6 +1717,10 @@ def main():
                 gui.update_backtests(payload)
                 gui.update_data_quality(payload)
                 gui.update_alerts(payload)
+                gui.update_training_data(payload)
+                
+                # Actualizar logs de Phase 1 (cada 5 segundos, igual que el resto)
+                gui.refresh_phase1_logs()
                 
                 # Actualizar status bar
                 timestamp = payload['ts'].strftime('%Y-%m-%d %H:%M:%S')

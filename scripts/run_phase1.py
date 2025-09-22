@@ -153,7 +153,9 @@ def main():
             # 0) Backfill de agentes históricos (una sola vez si está habilitado)
             if EN_AGENTS_BACKFILL and last_agents_backfill == t0:
                 logger.info("🔄 Ejecutando backfill de predicciones históricas...")
-                _try_run_once("core.ml.agents.agents_backfill")
+                # Usar backfill para todos los timeframes
+                import core.ml.agents.agents_backfill as ab
+                ab.backfill_all_agents_all_tfs()
                 last_agents_backfill = time.monotonic()
                 logger.info("✅ Agents backfill completado")
             

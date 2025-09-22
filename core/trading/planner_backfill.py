@@ -47,26 +47,46 @@ def _bps_to_multiplier(bps: int, side: str, invert: bool = False) -> float:
 
 
 def _fetch_preds_at(engine, symbol: str, qtf: str, ts: pd.Timestamp) -> Dict:
+    # Buscar predicciones exactas para este timestamp, o la más cercana si no existe exacta
     sql = text(
         """
-        SELECT task, pred_label, pred_conf, probs
+        SELECT task, pred_label, pred_conf, probs, ts as pred_ts
         FROM ml.agent_preds
-        WHERE symbol=:s AND timeframe=:tf AND ts = (
-            SELECT MAX(ts) FROM ml.agent_preds WHERE symbol=:s AND timeframe=:tf AND ts<=:t
-        )
+        WHERE symbol=:s AND timeframe=:tf AND ts <= :t
+        ORDER BY ts DESC
+        LIMIT 3
         """
     )
     with engine.begin() as conn:
         rows = conn.execute(sql, {"s": symbol, "tf": qtf, "t": ts}).mappings().all()
+    
+    if not rows:
+        return {}
+    
+    # Agrupar por task y tomar la más reciente para cada uno
     out = {}
+    seen_tasks = set()
+    
     for r in rows:
+        task = r["task"]
+        if task in seen_tasks:
+            continue
+        seen_tasks.add(task)
+        
         probs = r["probs"]
         if isinstance(probs, str):
             try:
                 probs = json.loads(probs)
             except Exception:
                 probs = {}
-        out[r["task"]] = {"label": r["pred_label"], "conf": float(r.get("pred_conf") or 0), "probs": probs}
+        
+        out[task] = {
+            "label": r["pred_label"], 
+            "conf": float(r.get("pred_conf") or 0), 
+            "probs": probs,
+            "pred_ts": r["pred_ts"]
+        }
+    
     return out
 
 
@@ -216,24 +236,44 @@ def backfill(window_days: int | None = None) -> int:
         logger.info("Sin features para backfill")
         return 0
 
-    end_ts = pd.Timestamp.utcnow()
-    start_ts = max(pd.Timestamp(row["min_ts"]).to_pydatetime(), (end_ts - timedelta(days=win_days)).to_pydatetime())
+    end_ts = pd.Timestamp.now(tz="UTC")
+    min_ts = pd.to_datetime(row["min_ts"], utc=True)
+    start_ts = max(min_ts, end_ts - timedelta(days=win_days))
 
     written = 0
-    cur = pd.Timestamp(start_ts, tz="UTC")
+    cur = pd.to_datetime(start_ts, utc=True)
+    total_chunks = ((end_ts - cur).days // chunk_days) + 1
+    chunk_num = 0
+    
     while cur < end_ts:
         nxt = min(cur + timedelta(days=chunk_days), end_ts)
+        chunk_num += 1
+        chunk_plans = 0
+        
+        logger.info(f"📅 Procesando chunk {chunk_num}/{total_chunks}: {cur.strftime('%Y-%m-%d %H:%M')} → {nxt.strftime('%Y-%m-%d %H:%M')}")
+        
         for sym in symbols:
             df = _load_features_chunk(engine, sym, qtf, cur, nxt)
             if df.empty:
                 continue
+                
+            sym_plans = 0
             for _, r in df.iterrows():
-                preds = _fetch_preds_at(engine, sym, qtf, r["ts"])  # usa última predicción <= ts
+                preds = _fetch_preds_at(engine, sym, qtf, r["ts"])
+                if not preds:  # No hay predicciones para este timestamp
+                    continue
+                    
                 plan = _build_plan(sym, qtf, preds, r, cfg)
                 if plan:
                     _upsert_plan(engine, plan)
                     written += 1
-        logger.info(f"Backfill {cur} → {nxt}: planes escritos {written}")
+                    chunk_plans += 1
+                    sym_plans += 1
+            
+            if sym_plans > 0:
+                logger.info(f"  📊 {sym}: {sym_plans} planes generados")
+        
+        logger.info(f"✅ Chunk {chunk_num} completado: {chunk_plans} planes | Total acumulado: {written}")
         cur = nxt
 
     logger.info(f"Backfill completado: {written} planes")
