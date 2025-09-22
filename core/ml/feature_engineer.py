@@ -81,22 +81,16 @@ def get_max_feature_ts(engine, symbol: str, timeframe: str) -> Optional[datetime
         return row["max_ts"] if row and row["max_ts"] else None
 
 def fetch_ohlcv_df(engine, symbol: str, timeframe: str, since_dt: Optional[datetime]) -> pd.DataFrame:
+    # Por política actual: limitar a los últimos 2 años cuando no hay punto de partida
     if since_dt is None:
-        sql = text("""
-            SELECT ts, open, high, low, close, volume
-            FROM market.historical_data
-            WHERE symbol = :symbol AND timeframe = :tf
-            ORDER BY ts ASC
-        """)
-        params = {"symbol": symbol, "tf": timeframe}
-    else:
-        sql = text("""
-            SELECT ts, open, high, low, close, volume
-            FROM market.historical_data
-            WHERE symbol = :symbol AND timeframe = :tf AND ts >= :since
-            ORDER BY ts ASC
-        """)
-        params = {"symbol": symbol, "tf": timeframe, "since": since_dt}
+        since_dt = datetime.now(tz=timezone.utc) - timedelta(days=int(2 * 365))
+    sql = text("""
+        SELECT ts, open, high, low, close, volume
+        FROM market.historical_data
+        WHERE symbol = :symbol AND timeframe = :tf AND ts >= :since
+        ORDER BY ts ASC
+    """)
+    params = {"symbol": symbol, "tf": timeframe, "since": since_dt}
 
     with engine.begin() as conn:
         df = pd.read_sql(sql, conn, params=params, parse_dates=["ts"])

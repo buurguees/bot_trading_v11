@@ -1,0 +1,147 @@
+# Configuración para entrenamiento nocturno optimizado
+# Ejecutar con: python -m core.ml.training.night_train.batch_train -c config/ml/night_training.yaml
+
+# Símbolos a entrenar (ordenados por prioridad/volumen)
+symbols:
+  - "BTCUSDT"
+  - "ETHUSDT" 
+  - "ADAUSDT"
+  - "SOLUSDT"
+  - "DOGEUSDT"
+  - "XRPUSDT"
+
+# Timeframes a procesar
+timeframes:
+  - "1m"
+  - "5m"
+  - "15m"
+  - "1h"
+  - "4h"
+  - "1d"
+
+# Horizontes de predicción
+horizons:
+  - 1
+  - 3
+  - 5
+
+# Configuración de datos
+days_back: 365  # Usar todo el historial disponible
+min_rows: 1000  # Mínimo de filas para entrenar
+dropna_cols_min_fraction: 0.8  # Mínimo 80% de datos válidos por columna
+
+# Configuración de validación
+n_splits: 5  # Número de folds para walk-forward
+embargo_minutes: 30  # Embargo temporal entre train/validation
+
+# Configuración del modelo
+model:
+  kind: "LogisticRegression"
+  max_iter: 2000
+  param_grid:
+    C: [0.1, 1.0, 10.0]
+    class_weight: ["balanced", null]
+    solver: ["lbfgs", "liblinear"]
+
+# Configuración de paralelización
+num_workers: 4  # Número de procesos paralelos (se ajusta automáticamente)
+max_memory_per_process: 2.0  # GB por proceso
+memory_threshold: 0.85  # Límite de memoria del sistema
+
+# Configuración de reintentos
+retry_attempts: 3
+retry_delay: 5.0  # segundos
+skip_threshold: 3  # Saltar símbolo si falla 3 veces consecutivas
+
+# Configuración de promoción
+promote_if:
+  min_auc: 0.52
+  max_brier: 0.26
+  min_acc: 0.50
+
+# Configuración de archivos
+artifacts_dir: "artifacts/direction"
+version_tag: "night_v1.0.0"
+
+# Configuración del dashboard
+dashboard:
+  enabled: true
+  port: 5000
+  host: "0.0.0.0"
+  refresh_interval: 5  # segundos
+
+# Configuración de logging
+logging:
+  level: "INFO"
+  file: "logs/batch_train_night.log"
+  max_size: "10MB"
+  backup_count: 5
+
+# Configuración de checkpoints
+checkpoint:
+  enabled: true
+  interval: 30  # segundos
+  file: "logs/night_training_checkpoint.json"
+
+# Configuración de limpieza
+cleanup:
+  enabled: true
+  interval: 60  # segundos
+  max_cache_size: 1000  # elementos en cache
+  force_gc_interval: 300  # segundos
+
+# Configuración de monitoreo
+monitoring:
+  memory_check_interval: 10  # segundos
+  process_restart_threshold: 0.9  # Reiniciar si usa >90% de memoria
+  health_check_interval: 30  # segundos
+
+# Configuración de prioridades por símbolo
+symbol_priorities:
+  BTCUSDT: 100
+  ETHUSDT: 90
+  ADAUSDT: 80
+  SOLUSDT: 70
+  DOGEUSDT: 60
+  XRPUSDT: 50
+
+# Configuración de recursos por timeframe
+timeframe_resources:
+  "1m":
+    max_memory: 1.5  # GB
+    priority_boost: 10
+  "5m":
+    max_memory: 1.0  # GB
+    priority_boost: 5
+  "15m":
+    max_memory: 0.8  # GB
+    priority_boost: 0
+  "1h":
+    max_memory: 0.6  # GB
+    priority_boost: 0
+  "4h":
+    max_memory: 0.4  # GB
+    priority_boost: 0
+  "1d":
+    max_memory: 0.3  # GB
+    priority_boost: 0
+
+# Configuración de alertas
+alerts:
+  enabled: true
+  email: null  # Configurar si se quiere notificaciones por email
+  webhook: null  # Configurar si se quiere notificaciones por webhook
+  thresholds:
+    memory_usage: 0.9  # Alertar si memoria > 90%
+    cpu_usage: 0.95  # Alertar si CPU > 95%
+    disk_usage: 0.85  # Alertar si disco > 85%
+    failed_jobs: 5  # Alertar si > 5 trabajos fallan
+
+# Configuración de escalado automático
+auto_scaling:
+  enabled: true
+  min_workers: 1
+  max_workers: 8
+  scale_up_threshold: 0.7  # Escalar si CPU > 70%
+  scale_down_threshold: 0.3  # Reducir si CPU < 30%
+  scale_cooldown: 60  # segundos entre escalados

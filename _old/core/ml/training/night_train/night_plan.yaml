@@ -1,0 +1,34 @@
+# Qué entrenar
+symbols: [BTCUSDT, ETHUSDT, ADAUSDT, SOLUSDT, DOGEUSDT, XRPUSDT]
+timeframes: [1m, 5m]
+horizons: [1, 3, 5]            # velas a futuro para la etiqueta
+
+# Ventanas / validación temporal
+days_back: 365                 # histórico máximo a usar
+n_splits: 6                    # nº de ventanas walk-forward (aumentado)
+embargo_minutes: 30            # "gap" entre train y valid (reducido)
+
+# Modelo base (pipeline: StandardScaler + LogisticRegression)
+model:
+  kind: logreg
+  param_grid:
+    C: [0.5, 1.0, 2.0]         # grid optimizado
+    class_weight: [null, "balanced"]  # prueba con y sin balanceo
+    solver: ["lbfgs", "saga"]   # múltiples solvers para convergencia
+  max_iter: 3000               # más iteraciones para convergencia
+
+# Requisitos mínimos
+min_rows: 5000                 # descarta combos con pocos datos
+dropna_cols_min_fraction: 0.95 # si falta >5% en alguna columna, la quitamos
+
+# Política de promoción (para marcar AgentVersions.promoted=true)
+promote_if:
+  min_auc: 0.53
+  max_brier: 0.25              # ligeramente más estricto
+
+# Guardado de artefactos
+artifacts_dir: artifacts/direction
+version_tag: "v1.0.night"
+
+# Concurrencia
+num_workers: 4                 # 1 = secuencial; sube si tu CPU aguanta

@@ -37,12 +37,22 @@ def load_symbols_and_query_tf(task: str, default_tf: str="1m"):
 
 def fetch_feature_row(symbol: str, timeframe: str):
     lc = last_closed_ts(timeframe)
+    # Adaptación a esquemas: algunas instalaciones usan ema_20 y st_direction
+    # Alias para mantener compatibilidad con agentes existentes
     sql = text("""
-        SELECT ts, close, rsi_14, macd_hist, ema_21, ema_50, ema_200, atr_14,
-               obv, supertrend_dir, smc_bull, smc_bear
+        SELECT ts,
+               rsi_14,
+               macd_hist,
+               COALESCE(ema_21, ema_20) AS ema_21,
+               ema_50,
+               ema_200,
+               atr_14,
+               obv,
+               COALESCE(supertrend_dir, st_direction) AS supertrend_dir
         FROM market.features
         WHERE symbol=:s AND timeframe=:tf AND ts<=:lc
-        ORDER BY ts DESC LIMIT 1
+        ORDER BY ts DESC
+        LIMIT 1
     """)
     with ENGINE.begin() as conn:
         row = conn.execute(sql, {"s": symbol, "tf": timeframe, "lc": lc}).mappings().first()

@@ -1,0 +1,28 @@
+# logging.yaml - Configuración de logging estructurado
+# Define niveles, formatos, destinos y notificaciones
+# Usado por todos los módulos (core/, scripts/)
+# Versión: 1.0.0
+
+version: "1.0.0"
+
+logging:
+  level: INFO            # Nivel global: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: json          # Formato: json (estructurado) o text
+  destinations:
+    console: true       # Mostrar logs en consola
+    file:
+      enabled: true
+      path: "logs/bot_trading_v11.log"
+      rotation: "1 day"  # Rotar logs diariamente
+      max_size_mb: 100   # Máximo 100MB por archivo
+  notifications:        # Notificaciones para logs críticos
+    telegram:
+      enabled: true     # Enviar logs CRITICAL a Telegram
+      level: CRITICAL   # Nivel mínimo para notificar
+      chat_id: 937027893  # ID del chat (de .env)
+  modules:
+    core.data: INFO     # Nivel por módulo
+    core.ml: DEBUG
+    core.trading: INFO
+    core.control: INFO
+    scripts: INFO

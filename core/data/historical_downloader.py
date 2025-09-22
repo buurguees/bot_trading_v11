@@ -23,7 +23,15 @@ import ccxt
 import yaml
 from dotenv import load_dotenv
 
-from core.data.database import MarketDB
+# Import robusto para ejecución directa del archivo
+try:
+    from core.data.database import MarketDB
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    # Añade la raíz del proyecto al sys.path
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+    from core.data.database import MarketDB
 
 load_dotenv(os.path.join("config", ".env"))
 

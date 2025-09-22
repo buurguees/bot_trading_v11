@@ -1,0 +1,438 @@
+# Configuración robusta para entrenamientos largos
+# Sistema de trading con ML optimizado
+
+# =============================================================================
+# CONFIGURACIÓN DE RECURSOS
+# =============================================================================
+resources:
+  # Límites de memoria y procesamiento
+  max_memory_gb: 8                    # Límite máximo de RAM en GB
+  max_workers: 4                      # Número máximo de workers paralelos
+  chunk_size: 50000                   # Tamaño de chunk para procesamiento
+  cache_size_gb: 2                    # Tamaño del cache en GB
+  gpu_enabled: false                  # Habilitar GPU si está disponible
+  
+  # Configuración de base de datos
+  db_pool_size: 20                    # Pool de conexiones DB
+  db_max_overflow: 30                 # Conexiones adicionales
+  db_pool_recycle: 3600              # Reciclar conexiones cada hora
+  
+  # Configuración de archivos
+  temp_dir: "temp"                    # Directorio temporal
+  artifacts_dir: "artifacts"          # Directorio de artefactos
+  logs_dir: "logs"                    # Directorio de logs
+  checkpoints_dir: "checkpoints"      # Directorio de checkpoints
+
+# =============================================================================
+# CONFIGURACIÓN DE ENTRENAMIENTO
+# =============================================================================
+training:
+  # Configuración general
+  random_seed: 42                     # Semilla para reproducibilidad
+  n_jobs: -1                         # Usar todos los cores disponibles
+  
+  # Validación cruzada
+  validation:
+    method: "walk_forward"            # Método de validación
+    n_splits: 5                       # Número de folds
+    embargo_minutes: 30               # Minutos de embargo entre train/test
+    test_size: 0.2                    # Proporción de datos para test
+    gap_minutes: 15                   # Gap entre folds en minutos
+    min_train_samples: 1000           # Mínimo de muestras para entrenar
+    min_test_samples: 200             # Mínimo de muestras para test
+  
+  # Optimización de hiperparámetros
+  optimization:
+    # Early stopping
+    early_stopping:
+      enabled: true                   # Habilitar early stopping
+      patience: 3                     # Folds sin mejora antes de parar
+      min_delta: 0.001               # Mejora mínima para considerar
+      restore_best_weights: true     # Restaurar mejores pesos
+    
+    # Configuración de iteraciones
+    max_iter: 5000                    # Iteraciones máximas por defecto
+    auto_tune: true                   # Ajustar automáticamente según datos
+    convergence_tol: 1e-4             # Tolerancia de convergencia
+    
+    # Búsqueda de hiperparámetros
+    hyperparameter_search:
+      enabled: true                   # Habilitar búsqueda de hiperparámetros
+      method: "random"                # Método: random, grid, bayesian
+      n_iter: 50                      # Iteraciones de búsqueda
+      cv_folds: 3                     # Folds para validación cruzada
+      scoring: "roc_auc"              # Métrica de evaluación
+  
+  # Sistema de checkpoints
+  checkpoints:
+    enabled: true                     # Habilitar checkpoints
+    frequency: "per_fold"             # Frecuencia: per_fold, per_epoch, time
+    retention_days: 7                 # Días de retención
+    save_best_only: true             # Guardar solo el mejor modelo
+    monitor: "val_auc"                # Métrica a monitorear
+    mode: "max"                       # Modo: max, min
+  
+  # Configuración de datos
+  data:
+    min_samples: 1000                 # Mínimo de muestras para entrenar
+    max_samples: 1000000              # Máximo de muestras (0 = sin límite)
+    balance_classes: true             # Balancear clases automáticamente
+    feature_selection: true           # Habilitar selección de features
+    feature_importance_threshold: 0.01 # Umbral de importancia de features
+  
+  # Configuración de memoria
+  memory:
+    cleanup_frequency: 10             # Limpiar memoria cada N folds
+    gc_force: true                    # Forzar garbage collection
+    memory_monitoring: true           # Monitorear uso de memoria
+    memory_warning_threshold: 0.8     # Umbral de advertencia (80%)
+
+# =============================================================================
+# CONFIGURACIÓN DE MODELOS
+# =============================================================================
+models:
+  # Modelo de dirección
+  direction:
+    # Parámetros por defecto
+    default_params:
+      C: [0.1, 1.0, 10.0]            # Parámetro de regularización
+      solver: ["liblinear", "saga"]   # Solvers disponibles
+      max_iter: 3000                  # Iteraciones máximas
+      class_weight: "balanced"        # Peso de clases
+      random_state: 42                # Semilla aleatoria
+    
+    # Umbrales de promoción
+    promotion_thresholds:
+      min_auc: 0.55                   # AUC mínimo para promoción (antes 0.52)
+      max_brier: 0.22                 # Brier score máximo (antes 0.25)
+      min_accuracy: 0.50              # Precisión mínima
+      min_samples: 1000               # Mínimo de muestras
+      min_f1: 0.45                    # F1 score mínimo
+      max_logloss: 0.7                # Log loss máximo
+    
+    # Configuración de validación
+    validation:
+      min_auc: 0.51                   # AUC mínimo en validación
+      max_brier: 0.26                 # Brier máximo en validación
+      min_accuracy: 0.49              # Precisión mínima en validación
+      stability_threshold: 0.02       # Umbral de estabilidad entre folds
+  
+  # Modelo de volatilidad
+  volatility:
+    default_params:
+      n_estimators: 100
+      max_depth: 10
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      random_state: 42
+    
+    promotion_thresholds:
+      min_r2: 0.3
+      max_mae: 0.1
+      min_samples: 500
+      min_correlation: 0.4
+  
+  # Modelo de régimen
+  regime:
+    default_params:
+      n_clusters: 3
+      init: "k-means++"
+      n_init: 10
+      max_iter: 300
+      random_state: 42
+    
+    promotion_thresholds:
+      min_silhouette: 0.3
+      min_samples: 200
+      max_inertia: 1000
+
+# =============================================================================
+# CONFIGURACIÓN DE MONITOREO
+# =============================================================================
+monitoring:
+  # Configuración de logging
+  log_level: "INFO"                   # Nivel de log: DEBUG, INFO, WARNING, ERROR
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_file: "logs/training.log"       # Archivo de log
+  log_rotation: true                  # Rotación de logs
+  log_max_size: "10MB"                # Tamaño máximo de log
+  log_backup_count: 5                 # Número de backups
+  
+  # Configuración de progreso
+  progress_frequency: 0.1             # Frecuencia de progreso (cada 10%)
+  progress_bar: true                  # Mostrar barra de progreso
+  progress_eta: true                  # Mostrar tiempo estimado
+  
+  # Configuración de métricas
+  metrics_frequency: "per_fold"       # Frecuencia: per_fold, per_epoch, time
+  metrics_save: true                  # Guardar métricas en archivo
+  metrics_file: "logs/metrics.json"   # Archivo de métricas
+  
+  # Configuración de alertas
+  memory_threshold_gb: 6              # Umbral de memoria para alerta
+  cpu_threshold_percent: 90           # Umbral de CPU para alerta
+  latency_threshold_seconds: 300      # Umbral de latencia para alerta
+  
+  # Configuración de notificaciones
+  notifications:
+    enabled: false                    # Habilitar notificaciones
+    email: false                      # Notificaciones por email
+    slack: false                      # Notificaciones por Slack
+    webhook: false                    # Notificaciones por webhook
+
+# =============================================================================
+# CONFIGURACIÓN DE BALANCE Y RIESGO
+# =============================================================================
+balance:
+  # Configuración general
+  mode: unified
+  initial: 1000.0                     # Balance inicial por defecto
+  target: 10000.0                     # Balance objetivo por defecto
+  risk_per_trade: 0.01                # Riesgo por trade (1%)
+  
+  # Configuración por símbolo
+  symbols:
+    BTCUSDT:
+      initial: 1000.0
+      target: 2000.0
+      risk_per_trade: 0.01
+      max_leverage: 5
+      min_trade_size: 0.0001
+    
+    ETHUSDT:
+      initial: 1000.0
+      target: 2000.0
+      risk_per_trade: 0.01
+      max_leverage: 5
+      min_trade_size: 0.001
+    
+    ADAUSDT:
+      initial: 5000.0
+      target: 5500.0
+      risk_per_trade: 0.005
+      max_leverage: 5
+      min_trade_size: 1.0
+    
+    SOLUSDT:
+      initial: 6000.0
+      target: 6600.0
+      risk_per_trade: 0.01
+      max_leverage: 5
+      min_trade_size: 0.1
+    
+    XRPUSDT:
+      initial: 5000.0
+      target: 5500.0
+      risk_per_trade: 0.005
+      max_leverage: 5
+      min_trade_size: 1.0
+    
+    DOGEUSDT:
+      initial: 3000.0
+      target: 3300.0
+      risk_per_trade: 0.005
+      max_leverage: 5
+      min_trade_size: 10.0
+
+# =============================================================================
+# CONFIGURACIÓN DE BACKTESTING
+# =============================================================================
+backtesting:
+  # Configuración general
+  enabled: true                       # Habilitar backtesting
+  frequency: "daily"                  # Frecuencia: daily, weekly, monthly
+  
+  # Parámetros de simulación
+  simulation:
+    fees_bps: 2                       # Comisiones en basis points
+    slip_bps: 2                       # Slippage en basis points
+    max_hold_bars: 600                # Máximo de barras para mantener posición
+    initial_balance: 1000.0           # Balance inicial para backtest
+  
+  # Configuración de métricas
+  metrics:
+    calculate_sharpe: true            # Calcular ratio de Sharpe
+    calculate_max_dd: true            # Calcular máxima drawdown
+    calculate_win_rate: true          # Calcular tasa de ganancia
+    calculate_profit_factor: true     # Calcular factor de ganancia
+  
+  # Configuración de reportes
+  reports:
+    generate_html: true               # Generar reporte HTML
+    generate_pdf: false               # Generar reporte PDF
+    include_charts: true              # Incluir gráficos
+    save_trades: true                 # Guardar trades individuales
+
+# =============================================================================
+# CONFIGURACIÓN DE FEATURES
+# =============================================================================
+features:
+  # Configuración general
+  enabled: true                       # Habilitar cálculo de features
+  real_time: true                     # Cálculo en tiempo real
+  batch_size: 1000                    # Tamaño de lote para cálculo
+  
+  # Features técnicas
+  technical:
+    rsi:
+      periods: [14, 21, 28]
+      enabled: true
+    
+    ema:
+      periods: [20, 50, 200]
+      enabled: true
+    
+    macd:
+      fast: 12
+      slow: 26
+      signal: 9
+      enabled: true
+    
+    bollinger_bands:
+      period: 20
+      std: 2
+      enabled: true
+    
+    atr:
+      period: 14
+      enabled: true
+    
+    obv:
+      enabled: true
+    
+    supertrend:
+      period: 10
+      multiplier: 3
+      enabled: true
+  
+  # Features de mercado
+  market:
+    volume_profile: true              # Perfil de volumen
+    price_action: true                # Acción de precio
+    support_resistance: true          # Soporte y resistencia
+    trend_detection: true             # Detección de tendencia
+  
+  # Configuración de cache
+  cache:
+    enabled: true                     # Habilitar cache de features
+    ttl_minutes: 60                   # TTL en minutos
+    max_size_mb: 100                  # Tamaño máximo en MB
+
+# =============================================================================
+# CONFIGURACIÓN DE ALERTAS Y NOTIFICACIONES
+# =============================================================================
+alerts:
+  # Configuración general
+  enabled: true                       # Habilitar alertas
+  channels: ["log", "file"]           # Canales: log, file, email, slack
+  
+  # Tipos de alertas
+  types:
+    memory_high: true                 # Memoria alta
+    cpu_high: true                    # CPU alta
+    training_slow: true               # Entrenamiento lento
+    model_poor: true                  # Modelo con mal rendimiento
+    data_quality: true                # Problemas de calidad de datos
+    system_error: true                # Errores del sistema
+  
+  # Umbrales de alerta
+  thresholds:
+    memory_percent: 80                # Porcentaje de memoria
+    cpu_percent: 90                   # Porcentaje de CPU
+    training_time_minutes: 30         # Tiempo de entrenamiento en minutos
+    auc_threshold: 0.45               # Umbral de AUC
+    data_missing_percent: 10          # Porcentaje de datos faltantes
+  
+  # Configuración de notificaciones
+  notifications:
+    email:
+      enabled: false
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      username: ""
+      password: ""
+      to_addresses: []
+    
+    slack:
+      enabled: false
+      webhook_url: ""
+      channel: "#trading-alerts"
+    
+    webhook:
+      enabled: false
+      url: ""
+      timeout: 30
+
+# =============================================================================
+# CONFIGURACIÓN DE DESARROLLO Y DEBUG
+# =============================================================================
+development:
+  # Configuración de debug
+  debug: false                        # Modo debug
+  verbose: false                      # Modo verbose
+  profile: false                      # Profiling de performance
+  
+  # Configuración de testing
+  test_mode: false                    # Modo de prueba
+  test_samples: 1000                  # Muestras para pruebas
+  test_timeframes: ["1m", "5m"]       # Timeframes para pruebas
+  
+  # Configuración de logging
+  log_predictions: false              # Log de predicciones
+  log_features: false                 # Log de features
+  log_metrics: true                   # Log de métricas
+  
+  # Configuración de validación
+  validate_data: true                 # Validar datos de entrada
+  validate_models: true               # Validar modelos
+  validate_predictions: true          # Validar predicciones
+
+# =============================================================================
+# CONFIGURACIÓN DE SEGURIDAD
+# =============================================================================
+security:
+  # Configuración de encriptación
+  encrypt_models: false               # Encriptar modelos guardados
+  encrypt_data: false                 # Encriptar datos sensibles
+  
+  # Configuración de acceso
+  require_auth: false                 # Requerir autenticación
+  api_key: ""                         # Clave API
+  allowed_ips: []                     # IPs permitidas
+  
+  # Configuración de auditoría
+  audit_log: true                     # Log de auditoría
+  audit_file: "logs/audit.log"        # Archivo de auditoría
+  audit_retention_days: 30            # Días de retención de auditoría
+
+# =============================================================================
+# CONFIGURACIÓN DE MANTENIMIENTO
+# =============================================================================
+maintenance:
+  # Configuración de limpieza
+  cleanup:
+    enabled: true                     # Habilitar limpieza automática
+    frequency: "daily"                # Frecuencia: daily, weekly, monthly
+    retention_days: 7                 # Días de retención
+    
+    # Archivos a limpiar
+    temp_files: true                  # Limpiar archivos temporales
+    old_logs: true                    # Limpiar logs antiguos
+    old_checkpoints: true             # Limpiar checkpoints antiguos
+    old_artifacts: true               # Limpiar artefactos antiguos
+  
+  # Configuración de respaldo
+  backup:
+    enabled: false                    # Habilitar respaldo automático
+    frequency: "daily"                # Frecuencia de respaldo
+    retention_days: 30                # Días de retención de respaldos
+    compress: true                    # Comprimir respaldos
+    encrypt: false                    # Encriptar respaldos
+  
+  # Configuración de actualización
+  update:
+    auto_check: false                 # Verificar actualizaciones automáticamente
+    check_frequency: "weekly"         # Frecuencia de verificación
+    auto_update: false                # Actualización automática
+    backup_before_update: true        # Respaldo antes de actualizar
