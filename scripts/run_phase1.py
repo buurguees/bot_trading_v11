@@ -120,6 +120,9 @@ def main():
     ST_RT_UPD    = _to_bool(os.getenv("PH1_START_REALTIME_UPDATER", "true"), True)
     ST_FE_UPD    = _to_bool(os.getenv("PH1_START_FEATURE_UPDATER", "true"), True)
     OMS_MODE     = os.getenv("OMS_MODE", "sim").lower()
+    
+    # Backfill de agentes históricos
+    EN_AGENTS_BACKFILL = _to_bool(os.getenv("AGENTS_BACKFILL_ENABLE", "false"), False)
 
     # child daemons
     p_realtime = None
@@ -127,7 +130,7 @@ def main():
 
     # timers
     t0 = time.monotonic()
-    last_pred = last_plan = last_risk = last_oms = t0
+    last_pred = last_plan = last_risk = last_oms = last_agents_backfill = t0
 
     running = True
     def _graceful(sig, frm):
@@ -147,6 +150,13 @@ def main():
             continue
 
         try:
+            # 0) Backfill de agentes históricos (una sola vez si está habilitado)
+            if EN_AGENTS_BACKFILL and last_agents_backfill == t0:
+                logger.info("🔄 Ejecutando backfill de predicciones históricas...")
+                _try_run_once("core.ml.agents.agents_backfill")
+                last_agents_backfill = time.monotonic()
+                logger.info("✅ Agents backfill completado")
+            
             # 1) asegurar daemons
             if ST_RT_UPD:
                 p_realtime = _ensure_proc("realtime_updater", p_realtime, "core.data.realtime_updater")

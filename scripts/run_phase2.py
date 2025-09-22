@@ -89,7 +89,6 @@ def main():
     # Configuración de features opcionales
     ENABLE_ENSEMBLE = _to_bool(os.getenv("PH2_ENABLE_ENSEMBLES"), False)
     ENABLE_BACKFILL = _to_bool(os.getenv("PLANNER_BACKFILL_ENABLE"), False)
-    ENABLE_AGENTS_BACKFILL = _to_bool(os.getenv("AGENTS_BACKFILL_ENABLE"), False)
     
     # Tracking de última ejecución por módulo
     last = {
@@ -99,8 +98,7 @@ def main():
         "rank": 0,
         "evtbt": 0,
         "score": 0,
-        "backfill": 0,
-        "agents_backfill": 0
+        "backfill": 0
     }
     
     def _graceful(signum, frame):
@@ -125,14 +123,7 @@ def main():
         try:
             now = time.monotonic()
             
-            # 0. Agents Backfill (una sola vez si está habilitado)
-            if ENABLE_AGENTS_BACKFILL and last["agents_backfill"] == 0:
-                logger.info("🔄 Ejecutando backfill de predicciones históricas...")
-                _run_module("core.ml.agents.agents_backfill", "backfill_all_agents")
-                last["agents_backfill"] = now
-                logger.info("✅ Agents backfill completado")
-            
-            # 0.1. Planner Backfill (una sola vez si está habilitado)
+            # 0. Planner Backfill (una sola vez si está habilitado)
             if ENABLE_BACKFILL and last["backfill"] == 0:
                 logger.info("🔄 Ejecutando backfill de planes históricos...")
                 _run_module("core.trading.planner_backfill", "backfill")
