@@ -89,12 +89,20 @@ def register_from_strategy(strategy_id: str) -> str:
                 f.write(b"placeholder-ppo-artifact")
 
         agent_id = str(uuid.uuid4())
+        # si el entrenador devolvió métricas, úsalas; si no, usa las de estrategia
+        mt_payload = ms
+        try:
+            if enable_rl and 'res' in locals() and isinstance(res, dict) and res.get('metrics'):
+                mt_payload = res['metrics']
+        except Exception:
+            pass
+
         conn.execute(text("""
             INSERT INTO ml.agents
               (agent_id, symbol, task, version, components, artifact_uri, train_run_ref, metrics, status)
             VALUES
               (:aid, :sym, 'execution', 'v0', '{}'::jsonb, :uri, :ref, :mt, 'candidate')
-        """), {"aid": agent_id, "sym": sym, "uri": artifact_uri, "ref": strategy_id, "mt": ms})
+        """), {"aid": agent_id, "sym": sym, "uri": artifact_uri, "ref": strategy_id, "mt": mt_payload})
 
     logger.info(f"Agente candidate registrado para {sym}: {agent_id}")
     return agent_id
