@@ -36,13 +36,14 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
+# Setup (añadir raíz al path antes de importar core.*)
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 from core.training.ppo_trainer import train_ppo_for_strategy
 from core.environments.trading_env import TradingEnv
 from core.config.config_loader import load_training_config
 
-# Setup
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
 load_dotenv(os.path.join("config", ".env"))
 DB_URL = os.getenv("DB_URL")
 
