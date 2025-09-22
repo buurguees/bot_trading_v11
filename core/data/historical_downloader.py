@@ -346,8 +346,10 @@ def analyze_and_repair(symbol: str = None, timeframe: str = None, days_back: int
     return results
 
 
-def run(years: int = 2) -> None:
+def run(years: int = None) -> None:
     cfg = load_symbols_config(CONFIG_PATH)
+    years_cfg = cfg.get("default_years_history", 2)
+    years_to_use = years if years is not None else years_cfg
     db = MarketDB()
     ex = make_exchange()
     ex.load_markets()
@@ -359,7 +361,7 @@ def run(years: int = 2) -> None:
 
         for tf in tfs:
             logger.info(f"==> Descargando {db_symbol} {tf}")
-            fetch_ohlcv_all(ex, db, ccxt_symbol, db_symbol, tf, years)
+            fetch_ohlcv_all(ex, db, ccxt_symbol, db_symbol, tf, years_to_use)
 
 
 if __name__ == "__main__":

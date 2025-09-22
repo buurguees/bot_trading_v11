@@ -183,6 +183,18 @@ def run_event_driven(strategy_ids: Optional[List[str]] = None) -> List[str]:
             })
             # trades detallados
             for t in trades:
+                # asegurar tipos nativos (evitar np.float64 en parámetros)
+                t_clean = {
+                    "entry_ts": t["entry_ts"],
+                    "exit_ts": t["exit_ts"],
+                    "entry_price": float(t["entry_price"]) if t.get("entry_price") is not None else None,
+                    "exit_price": float(t["exit_price"]) if t.get("exit_price") is not None else None,
+                    "qty": float(t.get("qty", 0.0)),
+                    "pnl_usdt": float(t.get("pnl_usdt", 0.0)),
+                    "mae": (float(t["mae"]) if t.get("mae") is not None else None),
+                    "mfe": (float(t["mfe"]) if t.get("mfe") is not None else None),
+                    "fees_usdt": float(t.get("fees_usdt", 0.0)),
+                }
                 conn.execute(text("""
                     INSERT INTO ml.backtest_trades
                       (entry_ts, run_id, trade_id, symbol, side, entry_price, exit_ts, exit_price, qty, pnl_usdt, mae, mfe, fees_usdt, bars_held, notes)
@@ -190,7 +202,7 @@ def run_event_driven(strategy_ids: Optional[List[str]] = None) -> List[str]:
                       (:entry_ts, :rid, gen_random_uuid(), :sym, :side, :entry_price, :exit_ts, :exit_price,
                        :qty, :pnl_usdt, :mae, :mfe, :fees_usdt, :bars, '{}'::jsonb)
                 """), {
-                    **t, "rid": run_id, "sym": s["symbol"], "side": side,
+                    **t_clean, "rid": run_id, "sym": s["symbol"], "side": side,
                     "bars": 10
                 })
         run_ids.append(run_id)

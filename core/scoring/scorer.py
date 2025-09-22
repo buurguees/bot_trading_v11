@@ -101,8 +101,8 @@ def score_and_gate_all():
 
             conn.execute(text("""
                 UPDATE ml.strategies
-                SET metrics_summary=:ms::jsonb, status=:st, updated_at=NOW()
-                WHERE strategy_id=:sid
+                SET metrics_summary = CAST(:ms AS jsonb), status = :st, updated_at = NOW()
+                WHERE strategy_id = :sid
             """), {"ms": json.dumps(ms), "st": new_status, "sid": r["strategy_id"]})
 
     logger.info(f"Estrategias listas: {ready} | rechazadas: {rejected}")

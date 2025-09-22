@@ -4,7 +4,11 @@ vectorized:
   slippage_bps: 1.0
   funding_apr: 0.05
   warmup_bars: 300
-  max_bars: 100000
+  random_windows:
+    enabled: true
+    n: 8
+    min_days: 3
+    max_days: 7
 
 event_driven:
   fees_bps: 3.0

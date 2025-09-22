@@ -158,7 +158,18 @@ evaluation:
 
 # Configuración para minería de estrategias
 strategy_mining:
+  # Controla el rango de minería:
+  # - Si full_history=true, usa TODO el histórico disponible en trading.trade_plans
+  # - Si full_history=false, usa window_days
+  full_history: true
   window_days: 730                # 2 años de datos históricos para minería
+
+# Control del cálculo de features desde YAML
+feature_engineering:
+  # Si true, recorre TODO el histórico por TF y rellena/reescribe features en chunks
+  repair_full_history: true
+  # Tamaño de chunk en días para el backfill de features
+  repair_chunk_days: 90
 
 registry:
   table: "ml.model_registry"

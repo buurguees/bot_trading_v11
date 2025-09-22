@@ -160,7 +160,7 @@ class EnhancedDBClient:
                         MAX({ts_col}) as last_prediction,
                         COUNT(DISTINCT task) as active_tasks,
                         {avg_expr} as avg_confidence
-                    FROM ml.agent_preds
+            FROM ml.agent_preds
                     WHERE {ts_col} >= NOW() - INTERVAL '1 hour'
                 """)
                 pred_check = conn.execute(pred_sql).mappings().first()
@@ -481,7 +481,7 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
         """Configura la interfaz de usuario"""
         # Main notebook
         self.notebook = ttk.Notebook(self)
-        
+
         # Tabs
         self.tab_dashboard = ttk.Frame(self.notebook)
         self.tab_strategies = ttk.Frame(self.notebook)
@@ -676,12 +676,17 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
             return
 
         strategies = data["strategies"].copy()
+        # Ordenar por la ejecución más reciente (backtest_time si existe, si no updated_at)
+        if "backtest_time" in strategies.columns:
+            strategies = strategies.sort_values("backtest_time", ascending=False, na_position="last")
+        elif "updated_at" in strategies.columns:
+            strategies = strategies.sort_values("updated_at", ascending=False, na_position="last")
         # Normalizar tipos numéricos para evitar comparaciones str/float
         for col in ("sharpe", "profit_factor", "max_dd", "winrate", "trades", "support"):
             if col in strategies.columns:
                 strategies[col] = pd.to_numeric(strategies[col], errors="coerce")
         
-        # Ordenar por Sharpe descendente (posicionar NaN al final)
+        # Ordenar por Sharpe dentro de las más recientes (posicionar NaN al final)
         # Orden solo con filas numéricas en Sharpe; luego apilar NaN al final
         numeric_mask = pd.to_numeric(strategies["sharpe"], errors="coerce").notna() if "sharpe" in strategies.columns else pd.Series([], dtype=bool)
         num_part = strategies[numeric_mask].sort_values("sharpe", ascending=False, na_position="last") if numeric_mask.any() else strategies.iloc[0:0]
@@ -947,7 +952,7 @@ class EnhancedTrainingMonitorGUI(tk.Tk):
 def main():
     parser = argparse.ArgumentParser(description="Enhanced Training Monitor GUI")
     parser.add_argument("--hours", type=int, default=24, help="Ventana temporal en horas")
-    parser.add_argument("--refresh", type=int, default=30, help="Intervalo de actualización en segundos")
+    parser.add_argument("--refresh", type=int, default=5, help="Intervalo de actualización en segundos")
     parser.add_argument("--days", type=int, help="Ventana temporal en días (sobrescribe --hours)")
     parser.add_argument("--detailed", action="store_true", help="Modo detallado con más información")
     

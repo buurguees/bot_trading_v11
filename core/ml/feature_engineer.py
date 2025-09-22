@@ -80,10 +80,90 @@ def get_max_feature_ts(engine, symbol: str, timeframe: str) -> Optional[datetime
         row = conn.execute(sql, {"symbol": symbol, "tf": timeframe}).mappings().first()
         return row["max_ts"] if row and row["max_ts"] else None
 
+def get_min_max_ohlcv_ts(engine, symbol: str, timeframe: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+    sql = text(
+        """
+        SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts
+        FROM market.historical_data
+        WHERE symbol = :symbol AND timeframe = :tf
+        """
+    )
+    with engine.begin() as conn:
+        row = conn.execute(sql, {"symbol": symbol, "tf": timeframe}).mappings().first()
+        return (row["min_ts"] if row else None, row["max_ts"] if row else None)
+
+def compute_indicators_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = df.copy()
+    df.loc[:, "rsi_14"] = rsi(df["close"], RSI_LEN)
+    macd_line, signal_line, hist = macd(df["close"], EMA_FAST, EMA_SLOW, MACD_SIGNAL)
+    df.loc[:, "macd"] = macd_line
+    df.loc[:, "macd_signal"] = signal_line
+    df.loc[:, "macd_hist"] = hist
+    df.loc[:, "ema_20"] = ema(df["close"], EMA20)
+    df.loc[:, "ema_50"] = ema(df["close"], EMA50)
+    df.loc[:, "ema_200"] = ema(df["close"], EMA200)
+    df.loc[:, "atr_14"] = atr(df, ATR_LEN)
+    df.loc[:, "obv"] = obv(df)
+    st_line, st_dir = supertrend(df, ST_ATR, ST_MULT)
+    df.loc[:, "supertrend"] = st_line
+    df.loc[:, "st_direction"] = st_dir
+    flags = smc_flags_basic(df)
+    df.loc[:, "smc_flags"] = flags
+    df.loc[:, "extra"] = [{} for _ in range(len(df))]
+    return df
+
+def backfill_features_for_range(engine, symbol: str, timeframe: str, start_dt: datetime, end_dt: datetime) -> int:
+    # Asegurar no exceder última vela cerrada
+    lc = last_closed_ts_dt(timeframe)
+    end_dt = min(end_dt, lc)
+    if start_dt >= end_dt:
+        return 0
+    df = fetch_ohlcv_df(engine, symbol, timeframe, start_dt)
+    if df.empty:
+        return 0
+    df = df[(df["ts"] >= start_dt) & (df["ts"] <= end_dt)]
+    if df.empty:
+        return 0
+    df = compute_indicators_df(df)
+    cols = [
+        "ts","rsi_14","macd","macd_signal","macd_hist",
+        "ema_20","ema_50","ema_200","atr_14","obv",
+        "supertrend","st_direction","smc_flags","extra"
+    ]
+    df_out = df[cols].copy()
+    return upsert_features(engine, symbol, timeframe, df_out)
+
+def repair_missing_features(engine, symbol: str, timeframe: str, chunk_days: int = 30) -> int:
+    min_ts, max_ts = get_min_max_ohlcv_ts(engine, symbol, timeframe)
+    if not min_ts or not max_ts:
+        logger.info(f"[{symbol}][{timeframe}] sin OHLCV para reparar.")
+        return 0
+    total = 0
+    cursor = min_ts
+    while cursor < max_ts:
+        window_end = cursor + timedelta(days=chunk_days)
+        try:
+            total += backfill_features_for_range(engine, symbol, timeframe, cursor, window_end)
+        except Exception as e:
+            logger.exception(f"Error reparando tramo {symbol} {timeframe} {cursor}→{window_end}: {e}")
+        cursor = window_end
+    return total
+
+def _default_since_from_yaml() -> datetime:
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            y = yaml.safe_load(f) or {}
+        years = int((y or {}).get("default_years_history", 2))
+    except Exception:
+        years = 2
+    return datetime.now(tz=timezone.utc) - timedelta(days=int(years * 365))
+
 def fetch_ohlcv_df(engine, symbol: str, timeframe: str, since_dt: Optional[datetime]) -> pd.DataFrame:
-    # Por política actual: limitar a los últimos 2 años cuando no hay punto de partida
+    # Por política actual: limitar a los últimos N años desde symbols.yaml cuando no hay punto de partida
     if since_dt is None:
-        since_dt = datetime.now(tz=timezone.utc) - timedelta(days=int(2 * 365))
+        since_dt = _default_since_from_yaml()
     sql = text("""
         SELECT ts, open, high, low, close, volume
         FROM market.historical_data
@@ -360,7 +440,41 @@ def compute_features_for(symbol: str, timeframe: str, engine) -> int:
 
     # 6) Si venimos de incremental, corta al rango nuevo (mayor que last_feat_ts)
     if last_feat_ts:
-        df = df[df["ts"] > last_feat_ts]
+        df_cut = df[df["ts"] > last_feat_ts]
+        if df_cut.empty:
+            # Diagnóstico: si el último OHLCV no supera last_feat_ts, hay desajuste; forzar backfill corto
+            last_ohlcv_ts = df["ts"].max()
+            logger.info(f"[{symbol}][{timeframe}] sin filas > last_feat_ts (last_feat_ts={last_feat_ts}, last_ohlcv_ts={last_ohlcv_ts}); forzando recalculo últimos 60 días")
+            forced_since = datetime.now(tz=timezone.utc) - timedelta(days=60)
+            df = fetch_ohlcv_df(engine, symbol, timeframe, forced_since)
+            if df.empty:
+                logger.info(f"[{symbol}][{timeframe}] sin OHLCV al forzar 60d; nada que hacer.")
+                return 0
+            lc = last_closed_ts_dt(timeframe)
+            df = df[df["ts"] <= lc]
+            if df.empty:
+                logger.info(f"[{symbol}][{timeframe}] sin velas cerradas al forzar; nada que hacer.")
+                return 0
+            df = df.copy()
+            df.loc[:, "rsi_14"] = rsi(df["close"], RSI_LEN)
+            macd_line, signal_line, hist = macd(df["close"], EMA_FAST, EMA_SLOW, MACD_SIGNAL)
+            df.loc[:, "macd"] = macd_line
+            df.loc[:, "macd_signal"] = signal_line
+            df.loc[:, "macd_hist"] = hist
+            df.loc[:, "ema_20"] = ema(df["close"], EMA20)
+            df.loc[:, "ema_50"] = ema(df["close"], EMA50)
+            df.loc[:, "ema_200"] = ema(df["close"], EMA200)
+            df.loc[:, "atr_14"] = atr(df, ATR_LEN)
+            df.loc[:, "obv"] = obv(df)
+            st_line, st_dir = supertrend(df, ST_ATR, ST_MULT)
+            df.loc[:, "supertrend"] = st_line
+            df.loc[:, "st_direction"] = st_dir
+            # Añadir flags y extra en el camino forzado
+            flags = smc_flags_basic(df)
+            df.loc[:, "smc_flags"] = flags
+            df.loc[:, "extra"] = [{} for _ in range(len(df))]
+        else:
+            df = df_cut
     if df.empty:
         logger.info(f"[{symbol}][{timeframe}] nada nuevo que upsertar.")
         return 0
@@ -376,6 +490,17 @@ def compute_features_for(symbol: str, timeframe: str, engine) -> int:
 
 def run() -> None:
     cfg = load_symbols_config(CONFIG_PATH)
+    # Opciones desde training.yaml
+    try:
+        from core.config.config_loader import load_training_config
+        train_cfg = load_training_config()
+        fe_cfg = (train_cfg or {}).get("feature_engineering", {})
+        repair_full = bool(fe_cfg.get("repair_full_history", False))
+        repair_chunk_days = int(fe_cfg.get("repair_chunk_days", 30))
+    except Exception:
+        repair_full = False
+        repair_chunk_days = 30
+
     engine = get_engine()
     total_rows = 0
 
@@ -385,7 +510,26 @@ def run() -> None:
         for tf in tfs:
             try:
                 logger.info(f"==> Features {symbol} {tf}")
-                total_rows += compute_features_for(symbol, tf, engine)
+                # Si se solicita reparación completa por YAML, hacerla primero para asegurar 100%
+                if repair_full:
+                    logger.info(f"[{symbol}][{tf}] reparación completa habilitada por YAML; procesando histórico en chunks de {repair_chunk_days}d…")
+                    total_rows += repair_missing_features(engine, symbol, tf, chunk_days=repair_chunk_days)
+                wrote = compute_features_for(symbol, tf, engine)
+                total_rows += wrote
+                if wrote == 0:
+                    # Si no escribió nada, verificar cobertura y reparar si está vacío
+                    min_ts, max_ts = get_min_max_ohlcv_ts(engine, symbol, tf)
+                    if min_ts and max_ts:
+                        # Contar features en el rango reciente (7 días)
+                        with engine.begin() as conn:
+                            cnt = conn.execute(text("""
+                                SELECT COUNT(*) FROM market.features
+                                WHERE symbol=:s AND timeframe=:tf AND ts>=NOW()-INTERVAL '7 days'
+                            """), {"s": symbol, "tf": tf}).scalar()
+                        if cnt == 0:
+                            logger.info(f"[{symbol}][{tf}] sin features recientes; iniciando reparación completa del histórico…")
+                            repaired = repair_missing_features(engine, symbol, tf, chunk_days=repair_chunk_days)
+                            total_rows += repaired
             except Exception as e:
                 logger.exception(f"Error en features {symbol} {tf}: {e}")
 

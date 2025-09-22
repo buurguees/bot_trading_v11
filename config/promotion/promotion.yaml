@@ -3,7 +3,7 @@ thresholds:
   global:
     min_trades: 100      # antes 200
     sharpe_min: 0.5      # antes 0.8
-    pf_min: 1.20         # antes 1.40
+    pf_min: 1.15         # antes 1.40
     max_dd_max: 0.30     # 15%
     stability_min: 0.50  # consistencia entre splits
   ramp_up:

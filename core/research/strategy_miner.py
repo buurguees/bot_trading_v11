@@ -2,7 +2,7 @@
 Strategy Miner
 --------------
 Lee:
-  - trading.trade_plans (últimos N días)
+  - trading.trade_plans (ventana configurable o TODO el histórico)
   - (opcional) ml.agent_preds para recuperar 'heads' si no están en source
 Escribe:
   - ml.strategies (status='candidate'), actualizando o creando por (symbol,timeframe,strategy_key)
@@ -18,7 +18,9 @@ Funciones:
 
 Nota:
   - Si window_days=None, lee la configuración desde training.yaml (strategy_mining.window_days)
-  - Por defecto usa 730 días (2 años) si está configurado en training.yaml
+  - Si training.yaml indica full_history (strategy_mining.full_history=true) o window_days <= 0,
+    entonces usa TODO el histórico disponible de trading.trade_plans (desde MIN(ts)).
+  - Si no hay configuración, usa default_years_history de config/market/symbols.yaml.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
 from core.config.config_loader import load_training_config
+import yaml
 
 load_dotenv(os.path.join("config", ".env"))
 DB_URL = os.getenv("DB_URL")
@@ -105,23 +108,52 @@ def _fingerprint(plan: Mapping) -> Tuple[str, Dict, Dict]:
     return strategy_key, rules, risk_profile
 
 
+def _default_years_history() -> int:
+    try:
+        with open(os.path.join("config","market","symbols.yaml"), "r", encoding="utf-8") as f:
+            y = yaml.safe_load(f) or {}
+        return int(y.get("default_years_history", 2))
+    except Exception:
+        return 2
+
+
 def mine_candidates(window_days: int = None) -> int:
     """
     Busca trade_plans recientes, agrega por fingerprint y upserta ml.strategies.
     Si window_days es None, lee la configuración desde training.yaml.
     """
     # Si no se especifica window_days, leer desde training.yaml
+    use_full_history = False
     if window_days is None:
         try:
             cfg = load_training_config()
-            window_days = cfg.get("strategy_mining", {}).get("window_days", 30)
+            sm = cfg.get("strategy_mining", {}) if cfg else {}
+            use_full_history = bool(sm.get("full_history", False))
+            window_days = sm.get("window_days")
         except Exception as e:
-            logger.warning(f"Error cargando configuración, usando window_days=30: {e}")
-            window_days = 30
-    
-    engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
-    since = pd.Timestamp.utcnow() - timedelta(days=window_days)
+            logger.warning(f"Error cargando training.yaml: {e}")
+            window_days = None
 
+    # Determinar 'since'
+    engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
+    since = None
+    if use_full_history or (window_days is not None and window_days <= 0):
+        # MIN(ts) en trade_plans
+        with engine.begin() as conn:
+            row = conn.execute(text("SELECT MIN(ts) AS first_ts FROM trading.trade_plans" )).mappings().first()
+        if not row or not row["first_ts"]:
+            logger.info("No hay trade_plans en la base de datos.")
+            return 0
+        since = pd.to_datetime(row["first_ts"])  # tz-naive o tz-aware, SQLA lo maneja
+        logger.info("Minería con TODO el histórico: desde %s", since)
+    else:
+        # Si no hay window_days en training.yaml, usar años por defecto del YAML de símbolos
+        if window_days is None:
+            years = _default_years_history()
+            window_days = int(years * 365)
+        since = pd.Timestamp.utcnow() - timedelta(days=int(window_days))
+        logger.info("Minería con ventana de %d días (desde %s)", window_days, since)
+    
     sql = text("""
         SELECT symbol, timeframe, ts, plan_id, side, entry_type, entry_price, limit_offset_bp,
                stop_loss, tp_targets, leverage, risk_pct, route, account_id, source, tags

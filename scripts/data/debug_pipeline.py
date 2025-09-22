@@ -56,12 +56,13 @@ def check_data_quality(engine):
     
     try:
         with engine.begin() as conn:
-            # 1. Último dato por símbolo/timeframe
-            print("\n1. ÚLTIMO DATO POR SÍMBOLO:")
+            # 1. Inicio y fin por símbolo/timeframe
+            print("\n1. INICIO/FIN POR SÍMBOLO:")
             result = conn.execute(text("""
                 SELECT 
                     symbol,
                     timeframe,
+                    MIN(ts) as first_ts,
                     MAX(ts) as last_ts,
                     COUNT(*) as total_records,
                     EXTRACT(EPOCH FROM (NOW() - MAX(ts))) / 60 as minutes_old
@@ -74,7 +75,8 @@ def check_data_quality(engine):
                 age_indicator = "🔴" if row['minutes_old'] > 60 else "🟡" if row['minutes_old'] > 10 else "🟢"
                 print(f"   {age_indicator} {row['symbol']:10} {row['timeframe']:4} | "
                       f"Registros: {row['total_records']:>6} | "
-                      f"Último: {row['last_ts']} ({row['minutes_old']:.1f}min)")
+                      f"Inicio: {row['first_ts']} | "
+                      f"Fin: {row['last_ts']} ({row['minutes_old']:.1f}min)")
 
             # 2. Verificar gaps en datos
             print("\n2. GAPS EN DATOS (últimas 24h):")
@@ -110,6 +112,19 @@ def check_data_quality(engine):
                     print(f"   ⚠️  {row['symbol']} {row['timeframe']}: {row['gap_count']} gaps detectados")
             else:
                 print("   ✅ No se detectaron gaps significativos")
+
+            # 3. Rango global de histórico y de features
+            print("\n3. RANGO GLOBAL (TODOS LOS SÍMBOLOS/TFs):")
+            g_hd = conn.execute(text("""
+                SELECT MIN(ts) AS first_ts, MAX(ts) AS last_ts, COUNT(*) AS n
+                FROM market.historical_data
+            """)).mappings().first()
+            g_ft = conn.execute(text("""
+                SELECT MIN(ts) AS first_ts, MAX(ts) AS last_ts, COUNT(*) AS n
+                FROM market.features
+            """)).mappings().first()
+            print(f"   historical_data → Inicio: {g_hd['first_ts']} | Fin: {g_hd['last_ts']} | Registros: {g_hd['n'] if g_hd else 0}")
+            print(f"   features        → Inicio: {g_ft['first_ts']} | Fin: {g_ft['last_ts']} | Registros: {g_ft['n'] if g_ft else 0}")
 
     except Exception as e:
         print(f"❌ Error en análisis de datos: {e}")
