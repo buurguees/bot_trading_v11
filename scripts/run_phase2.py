@@ -88,6 +88,7 @@ def main():
     
     # Configuración de features opcionales
     ENABLE_ENSEMBLE = _to_bool(os.getenv("PH2_ENABLE_ENSEMBLES"), False)
+    ENABLE_BACKFILL = _to_bool(os.getenv("PLANNER_BACKFILL_ENABLE"), False)
     
     # Tracking de última ejecución por módulo
     last = {
@@ -96,7 +97,8 @@ def main():
         "vecbt": 0,
         "rank": 0,
         "evtbt": 0,
-        "score": 0
+        "score": 0,
+        "backfill": 0
     }
     
     def _graceful(signum, frame):
@@ -121,7 +123,14 @@ def main():
         try:
             now = time.monotonic()
             
-            # 1. Strategy Mining (cada 5 minutos)
+            # 0. Planner Backfill (una sola vez si está habilitado)
+            if ENABLE_BACKFILL and last["backfill"] == 0:
+                logger.info("🔄 Ejecutando backfill de planes históricos...")
+                _run_module("core.trading.planner_backfill", "backfill")
+                last["backfill"] = now
+                logger.info("✅ Backfill completado")
+            
+            # 1. Strategy Mining (cada 5 segundos)
             if now - last["miner"] >= MINER_EVERY:
                 _run_module("core.research.strategy_miner", "mine_candidates")
                 last["miner"] = now
