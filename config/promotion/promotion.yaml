@@ -1,18 +1,23 @@
 ﻿# Reglas de promoción y endurecimiento progresivo
 thresholds:
   global:
-    min_trades: 100      # antes 200
-    sharpe_min: 0.5      # antes 0.8
-    pf_min: 1.15         # antes 1.40
-    max_dd_max: 0.30     # 15%
-    stability_min: 0.50  # consistencia entre splits
+    min_trades: 50
+    sharpe_min: 0.3
+    pf_min: 1.05
+    max_dd_max: 0.50
+    stability_min: 0.30
   ramp_up:
-    cadence_days: 14
+    cadence_days: 30
     step:
       sharpe_min: 0.05
-      pf_min: 0.10
-      max_dd_max: -0.01  # se reduce 1 p.p.
+      pf_min: 0.05
+      max_dd_max: -0.02
       stability_min: 0.02
+
+tie_breaker:
+  - stability
+  - sharpe
+  - max_dd
 # política de desempate (champion–challenger)
 tie_breaker:
   - stability

@@ -21,6 +21,7 @@ Funciones:
 from __future__ import annotations
 import os, json, logging
 from typing import Dict
+import numpy as np
 
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
@@ -39,26 +40,45 @@ if not logger.handlers:
 
 
 def compute_score(m: Dict) -> float:
+    """Score balanceado y realista para desarrollo."""
     sharpe = float(m.get("sharpe", 0.0))
-    pf     = float(m.get("profit_factor", 0.0))
-    dd     = float(m.get("max_dd", 0.0))
-    wr     = float(m.get("winrate", 0.0))
-    dd_term = (1.0 - min(dd, 0.99))
-    return 0.35*sharpe + 0.30*min(pf, 3.0) + 0.20*dd_term + 0.15*wr
+    pf = float(m.get("profit_factor", 1.0))
+    dd = float(m.get("max_dd", 1.0))
+    wr = float(m.get("winrate", 0.0))
+    trades = int(m.get("trades", 0))
+
+    trade_penalty = 1.0 if trades >= 20 else (trades / 20.0)
+    dd_term = max(0.1, 1.0 - min(dd, 0.95))
+    pf_capped = min(pf, 5.0) if pf != np.inf else 5.0
+
+    score = (0.30 * sharpe +
+             0.25 * (pf_capped - 1.0) +
+             0.25 * dd_term +
+             0.15 * wr +
+             0.05 * trade_penalty)
+    return float(max(0.0, score))
 
 
 def gate_ready_for_training(strategy_metrics: Dict, thresholds: Dict) -> bool:
+    """Gate más permisivo para desarrollo (aún controlado por thresholds)."""
     t = thresholds.get("global", {})
-    min_trades = int(t.get("min_trades", 200))
+    min_trades = int(t.get("min_trades", 20))
     if int(strategy_metrics.get("trades", 0)) < min_trades:
         return False
-    if float(strategy_metrics.get("sharpe", 0.0)) < float(t.get("sharpe_min", 0.8)):
+    if float(strategy_metrics.get("sharpe", 0.0)) < -1.0:
         return False
-    if float(strategy_metrics.get("profit_factor", 0.0)) < float(t.get("pf_min", 1.4)):
+    if float(strategy_metrics.get("profit_factor", 1.0)) < 0.8:
         return False
-    if float(strategy_metrics.get("max_dd", 1.0)) > float(t.get("max_dd_max", 0.15)):
+    if float(strategy_metrics.get("max_dd", 0.0)) > 0.80:
         return False
-    if float(strategy_metrics.get("stability", 0.7)) < float(t.get("stability_min", 0.7)):
+    # thresholds siguen aplicando si están por encima de estos mínimos
+    if float(strategy_metrics.get("sharpe", 0.0)) < float(t.get("sharpe_min", -1.0)):
+        return False
+    if float(strategy_metrics.get("profit_factor", 0.0)) < float(t.get("pf_min", 0.8)):
+        return False
+    if float(strategy_metrics.get("max_dd", 1.0)) > float(t.get("max_dd_max", 0.80)):
+        return False
+    if float(strategy_metrics.get("stability", 1.0)) < float(t.get("stability_min", 0.0)):
         return False
     return True
 

@@ -94,14 +94,22 @@ def _metrics_from_pnl(equity_curve: np.ndarray, rets: np.ndarray) -> Dict:
     dd = peaks - equity_curve
     peak = np.maximum(peaks, 1e-8)
     max_dd = float(np.max(dd / peak))
-    # sharpe diario aprox con rets por trade
-    mu = np.mean(rets) if len(rets) else 0.0
-    sd = np.std(rets) if len(rets) else 1e-8
-    sharpe = float((mu / sd) * np.sqrt(max(1.0, len(rets))))
-    wins = np.sum(rets > 0)
-    losses = np.sum(rets < 0)
-    pf = float((rets[rets>0].sum() / abs(rets[rets<0].sum())) if losses>0 else (np.inf if wins>0 else 0.0))
-    winrate = float(wins / max(1, wins+losses))
+    # Sharpe por trade (no anualizado)
+    if len(rets) > 1:
+        mu = float(np.mean(rets))
+        sd = float(np.std(rets, ddof=1) or 1e-8)
+        sharpe = float(mu / sd) if sd > 0 else 0.0
+    else:
+        sharpe = 0.0
+    wins = int(np.sum(rets > 0))
+    losses = int(np.sum(rets < 0))
+    if losses > 0:
+        avg_win = float(np.mean(rets[rets > 0])) if wins > 0 else 0.0
+        avg_loss = float(abs(np.mean(rets[rets < 0])))
+        pf = float((avg_win * wins) / (avg_loss * losses))
+    else:
+        pf = float(np.inf if wins > 0 else 0.0)
+    winrate = float(wins / max(1, wins + losses))
     return {"trades": int(len(rets)), "sharpe": sharpe, "profit_factor": pf, "max_dd": max_dd, "winrate": winrate, "pnl": float(pnl)}
 
 

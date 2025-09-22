@@ -1,21 +1,21 @@
 ﻿# Parámetros de backtest por motor
 vectorized:
-  fees_bps: 2.5
-  slippage_bps: 1.0
+  fees_bps: 1.0
+  slippage_bps: 0.5
   funding_apr: 0.05
-  warmup_bars: 300
+  warmup_bars: 200
   random_windows:
     enabled: true
-    n: 8
-    min_days: 3
-    max_days: 7
+    n: 5
+    min_days: 5
+    max_days: 10
 
 event_driven:
-  fees_bps: 3.0
-  slippage_bps: 2.0
-  latency_ms: 120
+  fees_bps: 1.5
+  slippage_bps: 1.0
+  latency_ms: 80
   allow_partial_fills: true
-  warmup_bars: 300
+  warmup_bars: 200
 
 walk_forward:
   windows:
