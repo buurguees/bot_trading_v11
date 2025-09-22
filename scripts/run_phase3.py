@@ -87,7 +87,7 @@ def get_ready_strategies_by_symbol(engine) -> Dict[str, List[Dict]]:
     strategies_by_symbol = defaultdict(list)
     for row in rows:
         strategies_by_symbol[row["symbol"]].append({
-            "strategy_id": row["strategy_id"],
+            "strategy_id": str(row["strategy_id"]),  # Convertir UUID a string
             "symbol": row["symbol"], 
             "timeframe": row["timeframe"],
             "created_at": row["created_at"],
