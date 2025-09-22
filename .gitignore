@@ -196,4 +196,4 @@ node_modules/
 # Compiled files
 *.pyc
 *.pyo
-*.pyd
+*.pyd_old/
