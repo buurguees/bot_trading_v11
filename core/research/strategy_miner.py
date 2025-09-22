@@ -134,6 +134,17 @@ def mine_candidates(window_days: int = None) -> int:
             logger.warning(f"Error cargando training.yaml: {e}")
             window_days = None
 
+    # Overrides por ENV (acepta START_MINING_FULL_HISTORY o STRAT_MINING_FULL_HISTORY)
+    env_full = os.getenv("START_MINING_FULL_HISTORY") or os.getenv("STRAT_MINING_FULL_HISTORY")
+    if env_full is not None and str(env_full).strip().lower() in ("1","true","yes","y","on"):
+        use_full_history = True
+    env_window = os.getenv("STRAT_MINING_WINDOW_DAYS")
+    if env_window:
+        try:
+            window_days = int(env_window)
+        except Exception:
+            pass
+
     # Determinar 'since'
     engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
     since = None
@@ -154,23 +165,14 @@ def mine_candidates(window_days: int = None) -> int:
         since = pd.Timestamp.utcnow() - timedelta(days=int(window_days))
         logger.info("Minería con ventana de %d días (desde %s)", window_days, since)
     
-    sql = text("""
-        SELECT symbol, timeframe, ts, plan_id, side, entry_type, entry_price, limit_offset_bp,
-               stop_loss, tp_targets, leverage, risk_pct, route, account_id, source, tags
-        FROM trading.trade_plans
-        WHERE ts >= :since
-          AND status IN ('planned','sent','filled')   -- puedes ajustar
-    """)
-    with engine.begin() as conn:
-        rows = [dict(r) for r in conn.execute(sql, {"since": since}).mappings().all()]
-
-    if not rows:
-        logger.info("No hay trade_plans en ventana.")
-        return 0
+    # Minería por chunks para cubrir ventanas largas/full-history
+    chunk_days = int(os.getenv("STRAT_MINING_CHUNK_DAYS", "60"))
+    end_ts = pd.Timestamp.utcnow()
 
     # Agregación por (symbol, timeframe, strategy_key)
     bucket: Dict[tuple, Dict] = {}
-    for r in rows:
+
+    def _accumulate(r: Dict):
         skey, rules, rprof = _fingerprint(r)
         key = (r["symbol"], r["timeframe"], skey)
         b = bucket.get(key)
@@ -187,6 +189,33 @@ def mine_candidates(window_days: int = None) -> int:
             b["support_n"] += 1
             if r["ts"] < b["first_seen"]: b["first_seen"] = r["ts"]
             if r["ts"] > b["last_seen"]:  b["last_seen"] = r["ts"]
+
+    sql_chunk = text(
+        """
+        SELECT symbol, timeframe, ts, plan_id, side, entry_type, entry_price, limit_offset_bp,
+               stop_loss, tp_targets, leverage, risk_pct, route, account_id, source, tags
+        FROM trading.trade_plans
+        WHERE ts >= :a AND ts < :b
+          AND status IN ('planned','sent','filled')
+        """
+    )
+
+    total_rows = 0
+    cur = since
+    with engine.begin() as conn:
+        while cur < end_ts:
+            nxt = min(cur + timedelta(days=chunk_days), end_ts)
+            chunk_rows = [dict(r) for r in conn.execute(sql_chunk, {"a": cur, "b": nxt}).mappings().all()]
+            if chunk_rows:
+                for r in chunk_rows:
+                    _accumulate(r)
+                total_rows += len(chunk_rows)
+                logger.info("Minería %s → %s: %d plans", cur, nxt, len(chunk_rows))
+            cur = nxt
+
+    if total_rows == 0:
+        logger.info("No hay trade_plans en rango.")
+        return 0
 
     # Upsert en ml.strategies (sin UNIQUE por strategy_key, hacemos SELECT/UPDATE o INSERT)
     upserted = 0
